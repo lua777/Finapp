@@ -28,6 +28,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.DriverRecord
 import com.example.viewmodel.DriverViewModel
@@ -977,6 +980,14 @@ fun AddEditRecordDialog(
 ) {
     val context = LocalContext.current
     val isEdit = recordToEdit != null
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    val safeDismiss = {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        onDismiss()
+    }
 
     // Fetch the last registered rent to auto-fill for nice user accessibility
     val lastRent by viewModel.lastRentValue.collectAsStateWithLifecycle()
@@ -1003,7 +1014,12 @@ fun AddEditRecordDialog(
     var miscStr by remember { mutableStateOf(recordToEdit?.expenseMisc?.toString()?.replace(".", ",") ?: "") }
     var descStr by remember { mutableStateOf(recordToEdit?.description ?: "") }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = safeDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1032,7 +1048,7 @@ fun AddEditRecordDialog(
                         fontWeight = FontWeight.Bold,
                         color = BentoTextDark
                     )
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = safeDismiss) {
                         Icon(Icons.Default.Close, contentDescription = "Fechar", tint = BentoTextSlate)
                     }
                 }
@@ -1049,6 +1065,8 @@ fun AddEditRecordDialog(
                 )
                 OutlinedButton(
                     onClick = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
                         val calendar = Calendar.getInstance().apply {
                             timeInMillis = dateMillis
                         }
@@ -1366,7 +1384,7 @@ fun AddEditRecordDialog(
                         Button(
                             onClick = {
                                 viewModel.deleteRecordById(recordToEdit!!.id)
-                                onDismiss()
+                                safeDismiss()
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = BentoRedBg),
                             shape = RoundedCornerShape(12.dp),
@@ -1409,7 +1427,7 @@ fun AddEditRecordDialog(
                                 expenseMisc = misc,
                                 description = descStr
                             )
-                            onDismiss()
+                            safeDismiss()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = BentoPrimaryBlue),
                         shape = RoundedCornerShape(12.dp),
