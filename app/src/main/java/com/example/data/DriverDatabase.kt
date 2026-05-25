@@ -5,9 +5,9 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [DriverRecord::class], version = 2, exportSchema = false)
+@Database(entities = [DriverRecord::class], version = 1, exportSchema = false)
 abstract class DriverDatabase : RoomDatabase() {
-    abstract val dao: DriverRecordDao
+    abstract val driverRecordDao: DriverRecordDao
 
     companion object {
         @Volatile
@@ -18,10 +18,10 @@ abstract class DriverDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     DriverDatabase::class.java,
-                    "driver_finance_database"
+                    "driver_flux_database"
                 )
-                .fallbackToDestructiveMigration()
-                .build()
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

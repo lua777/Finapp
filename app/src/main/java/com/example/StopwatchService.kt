@@ -38,10 +38,10 @@ class StopwatchService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Cronômetros de Corrida/Trabalho",
+                "Cronômetros - Fluxo Driver",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Notificação de controle de cronômetros em segundo plano para motoristas."
+                description = "Notificação de controle dos cronômetros de trabalho e almoço."
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -84,12 +84,15 @@ class StopwatchService : Service() {
                 StopwatchState.stopwatchSeconds.value = 0L
                 StopwatchState.lunchStopwatchSeconds.value = 0L
                 stopSelf()
+                return START_NOT_STICKY
             }
         }
         
-        // After managing action, make sure notification matches immediately!
+        // Ensure notification matched immediately!
         updateNotification()
         
+        // If everything is paused/stopped, and we didn't explicitly reset, we should still stay alive
+        // unless they reset.
         return START_STICKY
     }
 
@@ -98,7 +101,17 @@ class StopwatchService : Service() {
         tickerJob = serviceScope.launch {
             while (isActive) {
                 delay(1000)
-                if (StopwatchState.isStopwatchRunning.value || StopwatchState.isLunchStopwatchRunning.value) {
+                var updated = false
+                if (StopwatchState.isStopwatchRunning.value) {
+                    StopwatchState.stopwatchSeconds.value += 1
+                    updated = true
+                }
+                if (StopwatchState.isLunchStopwatchRunning.value) {
+                    StopwatchState.lunchStopwatchSeconds.value += 1
+                    updated = true
+                }
+                // Update notification whenever there is a tick, or periodically
+                if (updated || !StopwatchState.isStopwatchRunning.value && !StopwatchState.isLunchStopwatchRunning.value) {
                     updateNotification()
                 }
             }
@@ -106,8 +119,12 @@ class StopwatchService : Service() {
     }
 
     private fun updateNotification() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification())
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -123,7 +140,7 @@ class StopwatchService : Service() {
             else -> "⏸️ Fluxo Driver - Pausados"
         }
 
-        val contentText = "Principal: ${formatTime(workSec)} | Almoço: ${formatTime(lunchSec)}"
+        val contentText = "Trabalho: ${formatTime(workSec)} | Almoço: ${formatTime(lunchSec)}"
 
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -136,7 +153,7 @@ class StopwatchService : Service() {
         )
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play) // standard system icon
+            .setSmallIcon(android.R.drawable.ic_media_play) // Standard system play icon used for small badge
             .setContentTitle(title)
             .setContentText(contentText)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -146,14 +163,12 @@ class StopwatchService : Service() {
         // Work Action Button
         val workActionIntent = if (isWorkRunning) ACTION_PAUSE_WORK else ACTION_START_WORK
         val workActionLabel = if (isWorkRunning) "Pausar Trabalho" else "Iniciar Trabalho"
-        val workActionIcon = if (isWorkRunning) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-        builder.addAction(workActionIcon, workActionLabel, createActionPendingIntent(workActionIntent))
+        builder.addAction(0, workActionLabel, createActionPendingIntent(workActionIntent))
 
         // Lunch Action Button
         val lunchActionIntent = if (isLunchRunning) ACTION_PAUSE_LUNCH else ACTION_START_LUNCH
         val lunchActionLabel = if (isLunchRunning) "Pausar Almoço" else "Iniciar Almoço"
-        val lunchActionIcon = if (isLunchRunning) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-        builder.addAction(lunchActionIcon, lunchActionLabel, createActionPendingIntent(lunchActionIntent))
+        builder.addAction(0, lunchActionLabel, createActionPendingIntent(lunchActionIntent))
 
         return builder.build()
     }
