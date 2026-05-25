@@ -1209,6 +1209,7 @@ fun AddEditRecordDialog(
     val vKmAllowance by viewModel.vehicleKmAllowance.collectAsStateWithLifecycle()
     val vExtraKmCost by viewModel.vehicleExtraKmCost.collectAsStateWithLifecycle()
     val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
+    val vWorkDays by viewModel.vehicleWorkDaysPerWeek.collectAsStateWithLifecycle()
 
     val fuelLabel = when (vehicleType) {
         0 -> "Abastecimento (Combustão) (R$)"
@@ -1235,10 +1236,10 @@ fun AddEditRecordDialog(
     var mealStr by remember { mutableStateOf(recordToEdit?.expenseMeal?.toString()?.replace(".", ",") ?: "") }
     
     val kmVal = parsedDouble(kmStr)
-    val calculatedSuggestedCost = remember(vOwnership, vRentWeeklyCost, vKmAllowance, vExtraKmCost, vOwnCost, kmVal) {
+    val calculatedSuggestedCost = remember(vOwnership, vRentWeeklyCost, vKmAllowance, vExtraKmCost, vOwnCost, kmVal, vWorkDays) {
         if (vOwnership == 1) {
-            val dailyRentBase = vRentWeeklyCost / 7.0
-            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / 7.0 else 0.0
+            val dailyRentBase = vRentWeeklyCost / maxOf(1.0, vWorkDays.toDouble())
+            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / maxOf(1.0, vWorkDays.toDouble()) else 0.0
             val excessKm = if (vKmAllowance > 0.0) maxOf(0.0, kmVal - dailyAllowance) else 0.0
             val extraKmCostValue = excessKm * vExtraKmCost
             dailyRentBase + extraKmCostValue
@@ -1543,8 +1544,8 @@ fun AddEditRecordDialog(
                             modifier = Modifier.fillMaxWidth().testTag("rent_input")
                         )
                         if (vOwnership == 1 && vRentWeeklyCost > 0.0) {
-                            val baseDay = vRentWeeklyCost / 7.0
-                            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / 7.0 else 0.0
+                            val baseDay = vRentWeeklyCost / maxOf(1.0, vWorkDays.toDouble())
+                            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / maxOf(1.0, vWorkDays.toDouble()) else 0.0
                             val exceeded = if (vKmAllowance > 0.0) maxOf(0.0, kmVal - dailyAllowance) else 0.0
                             val excessCost = exceeded * vExtraKmCost
                             Text(
@@ -2230,6 +2231,7 @@ fun SettingsTab(
     val vKmAllowance by viewModel.vehicleKmAllowance.collectAsStateWithLifecycle()
     val vExtraKmCost by viewModel.vehicleExtraKmCost.collectAsStateWithLifecycle()
     val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
+    val vWorkDays by viewModel.vehicleWorkDaysPerWeek.collectAsStateWithLifecycle()
 
     val googleEmail by viewModel.googleUserEmail.collectAsStateWithLifecycle()
     val googleName by viewModel.googleUserName.collectAsStateWithLifecycle()
@@ -2641,8 +2643,42 @@ fun SettingsTab(
                                 unfocusedTextColor = BentoTextDark
                             )
                         )
+
                         Text(
-                            text = "O aluguel semanal será rateado em diárias (Valor Semanal / 7). Quando você lançar a atividade diária, o aplicativo também vai sugerir acréscimos caso você exceda a franquia de KM diária proporcional.",
+                            text = "Dias de Trabalho na Semana:",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextDark,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            (1..7).forEach { days ->
+                                val isSelected = vWorkDays == days
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                        .clickable { viewModel.setVehicleWorkDaysPerWeek(days) }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = days.toString(),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else BentoTextDark
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "O aluguel semanal será rateado em diárias com base nos seus dias de trabalho (Valor Semanal / $vWorkDays). Quando você lançar a atividade diária, o aplicativo também vai sugerir acréscimos caso você exceda a franquia de KM diária proporcional.",
                             fontSize = 11.sp,
                             color = BentoTextSlate
                         )
@@ -2662,7 +2698,7 @@ fun SettingsTab(
                                 val rentWeeklyC = parsedDouble(rentWeeklyCostInput)
                                 val kmAllowC = parsedDouble(kmAllowanceInput)
                                 val extraKmC = parsedDouble(extraKmCostInput)
-                                val rentC = rentWeeklyC / 7.0 // keep daily Rent cost synched as well
+                                val rentC = rentWeeklyC / maxOf(1.0, vWorkDays.toDouble()) // keep daily Rent cost synched as well
                                 val ownC = parsedDouble(ownCostInput)
 
                                 viewModel.setVehicleRentCost(rentC)
@@ -2685,7 +2721,9 @@ fun SettingsTab(
 
                     // Running Cost Estimator results
                     if (vConsumption > 0) {
-                        val costPerKm = fPriceEstimate / vConsumption
+                        val fuelCostPerKm = fPriceEstimate / vConsumption
+                        val rentCostPerKm = if (vOwnership == 1 && vKmAllowance > 0.0) vRentWeeklyCost / vKmAllowance else 0.0
+                        val totalCostPerKm = fuelCostPerKm + rentCostPerKm
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2714,14 +2752,35 @@ fun SettingsTab(
                                 }
                                 
                                 Text(
-                                    text = String.format(Locale("pt", "BR"), "Custo Estimado por Km Rodado: R$ %.3f / Km", costPerKm),
+                                    text = String.format(Locale("pt", "BR"), "Custo Estimado por Km Rodado: R$ %.3f / Km", totalCostPerKm),
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Black,
                                     color = BentoTextDark
                                 )
 
+                                if (vOwnership == 1 && rentCostPerKm > 0.0) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            text = String.format(Locale("pt", "BR"), "• Combustível/Energia: R$ %.3f / Km", fuelCostPerKm),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = BentoTextSlate
+                                        )
+                                        Text(
+                                            text = String.format(Locale("pt", "BR"), "• Fração de Aluguel: R$ %.3f / Km", rentCostPerKm),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = BentoTextSlate
+                                        )
+                                    }
+                                }
+
                                 Text(
-                                    text = "Isso significa que para cada 100 Km rodados, você investirá aproximadamente R$ ${String.format(Locale("pt", "BR"), "%.2f", costPerKm * 100)} em combustível/energia.",
+                                    text = if (vOwnership == 1 && rentCostPerKm > 0.0) {
+                                        "Isso significa que para cada 100 Km rodados, o custo total será de aproximadamente R$ ${String.format(Locale("pt", "BR"), "%.2f", totalCostPerKm * 100)} (R$ ${String.format(Locale("pt", "BR"), "%.2f", fuelCostPerKm * 100)} combustível + R$ ${String.format(Locale("pt", "BR"), "%.2f", rentCostPerKm * 100)} aluguel)."
+                                    } else {
+                                        "Isso significa que para cada 100 Km rodados, você investirá aproximadamente R$ ${String.format(Locale("pt", "BR"), "%.2f", totalCostPerKm * 100)} em combustível/energia."
+                                    },
                                     fontSize = 11.sp,
                                     color = BentoTextSlate
                                 )

@@ -59,6 +59,7 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     val vehicleKmAllowance = MutableStateFlow(0.0) // KM allowance per week
     val vehicleExtraKmCost = MutableStateFlow(0.0) // Cost per extra KM
     val vehicleOwnCost = MutableStateFlow(0.0) // Cost of maintaining / finance / wear of own vehicle per day
+    val vehicleWorkDaysPerWeek = MutableStateFlow(5) // Number of days of the week the driver works
 
     // Google Integration Stats
     val googleUserEmail = MutableStateFlow<String?>(null)
@@ -85,6 +86,7 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
         vehicleKmAllowance.value = prefs.getFloat("vehicle_km_allowance", 0f).toDouble()
         vehicleExtraKmCost.value = prefs.getFloat("vehicle_extra_km_cost", 0f).toDouble()
         vehicleOwnCost.value = prefs.getFloat("vehicle_own_cost", 0f).toDouble()
+        vehicleWorkDaysPerWeek.value = prefs.getInt("vehicle_work_days_per_week", 5)
 
         googleUserEmail.value = prefs.getString("google_user_email", null)
         googleUserName.value = prefs.getString("google_user_name", null)
@@ -197,6 +199,11 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     fun setVehicleOwnCost(cost: Double) {
         vehicleOwnCost.value = cost
         prefs.edit().putFloat("vehicle_own_cost", cost.toFloat()).apply()
+    }
+
+    fun setVehicleWorkDaysPerWeek(days: Int) {
+        vehicleWorkDaysPerWeek.value = days
+        prefs.edit().putInt("vehicle_work_days_per_week", days).apply()
     }
 
     // Monthly absolute revenue tracker for current calendar month
