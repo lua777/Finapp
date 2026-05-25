@@ -55,6 +55,9 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     val fuelPriceEstimate = MutableStateFlow(5.50) // Average cost per L or kWh
     val vehicleOwnership = MutableStateFlow(0) // 0 = Próprio, 1 = Alugado
     val vehicleRentCost = MutableStateFlow(0.0) // Cost of rental per day
+    val vehicleRentWeeklyCost = MutableStateFlow(0.0) // Cost of weekly rental
+    val vehicleKmAllowance = MutableStateFlow(0.0) // KM allowance per week
+    val vehicleExtraKmCost = MutableStateFlow(0.0) // Cost per extra KM
     val vehicleOwnCost = MutableStateFlow(0.0) // Cost of maintaining / finance / wear of own vehicle per day
 
     // Google Integration Stats
@@ -78,6 +81,9 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
         fuelPriceEstimate.value = prefs.getFloat("fuel_price_estimate", 5.50f).toDouble()
         vehicleOwnership.value = prefs.getInt("vehicle_ownership", 0)
         vehicleRentCost.value = prefs.getFloat("vehicle_rent_cost", 0f).toDouble()
+        vehicleRentWeeklyCost.value = prefs.getFloat("vehicle_rent_weekly_cost", 0f).toDouble()
+        vehicleKmAllowance.value = prefs.getFloat("vehicle_km_allowance", 0f).toDouble()
+        vehicleExtraKmCost.value = prefs.getFloat("vehicle_extra_km_cost", 0f).toDouble()
         vehicleOwnCost.value = prefs.getFloat("vehicle_own_cost", 0f).toDouble()
 
         googleUserEmail.value = prefs.getString("google_user_email", null)
@@ -171,6 +177,21 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     fun setVehicleRentCost(cost: Double) {
         vehicleRentCost.value = cost
         prefs.edit().putFloat("vehicle_rent_cost", cost.toFloat()).apply()
+    }
+
+    fun setVehicleRentWeeklyCost(cost: Double) {
+        vehicleRentWeeklyCost.value = cost
+        prefs.edit().putFloat("vehicle_rent_weekly_cost", cost.toFloat()).apply()
+    }
+
+    fun setVehicleKmAllowance(allowance: Double) {
+        vehicleKmAllowance.value = allowance
+        prefs.edit().putFloat("vehicle_km_allowance", allowance.toFloat()).apply()
+    }
+
+    fun setVehicleExtraKmCost(cost: Double) {
+        vehicleExtraKmCost.value = cost
+        prefs.edit().putFloat("vehicle_extra_km_cost", cost.toFloat()).apply()
     }
 
     fun setVehicleOwnCost(cost: Double) {
@@ -289,67 +310,53 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Stopwatch for tracking active ride hours
-    private var stopwatchJob: Job? = null
-    val stopwatchSeconds = MutableStateFlow(0L)
-    val isStopwatchRunning = MutableStateFlow(false)
+    val stopwatchSeconds = StopwatchState.stopwatchSeconds
+    val isStopwatchRunning = StopwatchState.isStopwatchRunning
+
+    private fun sendServiceAction(action: String) {
+        val context = getApplication<Application>()
+        val intent = android.content.Intent(context, com.example.StopwatchService::class.java).apply {
+            this.action = action
+        }
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     fun startStopwatch() {
-        if (isStopwatchRunning.value) return
-        // Auto pause lunch if it is running
-        if (isLunchStopwatchRunning.value) {
-            pauseLunchStopwatch()
-        }
-        isStopwatchRunning.value = true
-        stopwatchJob?.cancel()
-        stopwatchJob = viewModelScope.launch {
-            while (isStopwatchRunning.value) {
-                delay(1000)
-                stopwatchSeconds.value += 1
-            }
-        }
+        sendServiceAction(com.example.StopwatchService.ACTION_START_WORK)
     }
 
     fun pauseStopwatch() {
-        isStopwatchRunning.value = false
-        stopwatchJob?.cancel()
-        stopwatchJob = null
+        sendServiceAction(com.example.StopwatchService.ACTION_PAUSE_WORK)
     }
 
     fun resetStopwatch() {
-        pauseStopwatch()
-        stopwatchSeconds.value = 0L
+        StopwatchState.stopwatchSeconds.value = 0L
+        sendServiceAction(com.example.StopwatchService.ACTION_PAUSE_WORK)
     }
 
     // Secondary stopwatch for tracking lunch/break hours (tempo parado)
-    private var lunchStopwatchJob: Job? = null
-    val lunchStopwatchSeconds = MutableStateFlow(0L)
-    val isLunchStopwatchRunning = MutableStateFlow(false)
+    val lunchStopwatchSeconds = StopwatchState.lunchStopwatchSeconds
+    val isLunchStopwatchRunning = StopwatchState.isLunchStopwatchRunning
 
     fun startLunchStopwatch() {
-        if (isLunchStopwatchRunning.value) return
-        // Auto pause work stopwatch if it is running
-        if (isStopwatchRunning.value) {
-            pauseStopwatch()
-        }
-        isLunchStopwatchRunning.value = true
-        lunchStopwatchJob?.cancel()
-        lunchStopwatchJob = viewModelScope.launch {
-            while (isLunchStopwatchRunning.value) {
-                delay(1000)
-                lunchStopwatchSeconds.value += 1
-            }
-        }
+        sendServiceAction(com.example.StopwatchService.ACTION_START_LUNCH)
     }
 
     fun pauseLunchStopwatch() {
-        isLunchStopwatchRunning.value = false
-        lunchStopwatchJob?.cancel()
-        lunchStopwatchJob = null
+        sendServiceAction(com.example.StopwatchService.ACTION_PAUSE_LUNCH)
     }
 
     fun resetLunchStopwatch() {
-        pauseLunchStopwatch()
-        lunchStopwatchSeconds.value = 0L
+        StopwatchState.lunchStopwatchSeconds.value = 0L
+        sendServiceAction(com.example.StopwatchService.ACTION_PAUSE_LUNCH)
     }
 
     // Operations

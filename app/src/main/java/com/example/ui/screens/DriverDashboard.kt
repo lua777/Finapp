@@ -48,6 +48,7 @@ import com.google.android.gms.common.api.Scope
 import com.google.android.gms.common.api.ApiException
 import com.example.data.GoogleDriveHelper
 import kotlinx.coroutines.launch
+import coil.compose.AsyncImage
 
 // Creative Direction: Bento Grid Design Theme (Dynamic Dark/Light modern, cozy shadows)
 private val BentoBg: Color @Composable get() = MaterialTheme.colorScheme.background
@@ -83,9 +84,43 @@ fun DriverDashboardScreen(
     val monthlyGoal by viewModel.monthlyRevenueGoal.collectAsStateWithLifecycle()
     val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
 
-    var activeTab by remember { mutableStateOf(0) } // 0 = Painel (Bento grid), 1 = Ajustes (Configurações)
+    var activeTab by remember { mutableStateOf(0) } // 0 = Painel (Bento grid), 1 = Ajustes (Configurações), 2 = Perfil
     var showAddDialog by remember { mutableStateOf(false) }
     var prefilledStopwatchHours by remember { mutableStateOf<Double?>(null) }
+
+    val context = LocalContext.current
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
+            .build()
+    }
+    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                if (account != null) {
+                    val email = account.email
+                    if (email != null) {
+                        viewModel.onGoogleSignInSuccess(
+                            email = email,
+                            displayName = account.displayName,
+                            photoUrl = account.photoUrl?.toString()
+                        )
+                        Toast.makeText(context, "Conectado ao Google: $email", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Falha na conexão Google: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -94,13 +129,17 @@ fun DriverDashboardScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (activeTab == 0) Icons.Default.DirectionsCar else Icons.Default.Settings,
-                            contentDescription = if (activeTab == 0) "Driver" else "Ajustes",
+                            imageVector = if (activeTab == 0) Icons.Default.DirectionsCar 
+                                          else if (activeTab == 1) Icons.Default.Settings 
+                                          else Icons.Default.AccountCircle,
+                            contentDescription = null,
                             tint = BentoPrimaryBlue,
                             modifier = Modifier.size(32.dp).padding(end = 8.dp)
                         )
                         Text(
-                            text = if (activeTab == 0) "Fluxo Driver" else "Ajustes de Conta",
+                            text = if (activeTab == 0) "Fluxo Driver" 
+                                   else if (activeTab == 1) "Ajustes de Conta" 
+                                   else "Perfil do Motorista",
                             fontWeight = FontWeight.ExtraBold,
                             color = BentoTextDark,
                             fontSize = 22.sp,
@@ -125,7 +164,7 @@ fun DriverDashboardScreen(
                     onClick = { activeTab = 0 },
                     icon = {
                         Icon(
-                            imageVector = if (activeTab == 0) Icons.Default.Dashboard else Icons.Default.Dashboard,
+                            imageVector = Icons.Default.Dashboard,
                             contentDescription = "Painel"
                         )
                     },
@@ -143,11 +182,29 @@ fun DriverDashboardScreen(
                     onClick = { activeTab = 1 },
                     icon = {
                         Icon(
-                            imageVector = if (activeTab == 1) Icons.Default.Settings else Icons.Default.Settings,
+                            imageVector = Icons.Default.Settings,
                             contentDescription = "Ajustes"
                         )
                     },
                     label = { Text("Ajustes", fontWeight = if (activeTab == 1) FontWeight.Bold else FontWeight.Medium) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = BentoPrimaryBlue,
+                        selectedTextColor = BentoPrimaryBlue,
+                        indicatorColor = BentoPrimaryBlue.copy(alpha = 0.12f),
+                        unselectedIconColor = BentoTextSlate,
+                        unselectedTextColor = BentoTextSlate
+                    )
+                )
+                NavigationBarItem(
+                    selected = activeTab == 2,
+                    onClick = { activeTab = 2 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "Perfil"
+                        )
+                    },
+                    label = { Text("Perfil", fontWeight = if (activeTab == 2) FontWeight.Bold else FontWeight.Medium) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = BentoPrimaryBlue,
                         selectedTextColor = BentoPrimaryBlue,
@@ -271,7 +328,20 @@ fun DriverDashboardScreen(
                 }
                 1 -> {
                     // Custom Bento settings/adjustment deck
-                    SettingsTab(viewModel = viewModel)
+                    SettingsTab(
+                        viewModel = viewModel,
+                        googleSignInClient = googleSignInClient,
+                        onSignInTrigger = { signInLauncher.launch(googleSignInClient.signInIntent) }
+                    )
+                }
+                2 -> {
+                    // Beautiful custom Driver Profile Tab with advanced stats
+                    ProfileTab(
+                        viewModel = viewModel,
+                        googleSignInClient = googleSignInClient,
+                        onSignInTrigger = { signInLauncher.launch(googleSignInClient.signInIntent) },
+                        onNavigateToSettings = { activeTab = 1 }
+                    )
                 }
             }
         }
@@ -1135,6 +1205,9 @@ fun AddEditRecordDialog(
     val vehicleType by viewModel.vehicleType.collectAsStateWithLifecycle()
     val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
     val vRentCost by viewModel.vehicleRentCost.collectAsStateWithLifecycle()
+    val vRentWeeklyCost by viewModel.vehicleRentWeeklyCost.collectAsStateWithLifecycle()
+    val vKmAllowance by viewModel.vehicleKmAllowance.collectAsStateWithLifecycle()
+    val vExtraKmCost by viewModel.vehicleExtraKmCost.collectAsStateWithLifecycle()
     val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
 
     val fuelLabel = when (vehicleType) {
@@ -1142,6 +1215,10 @@ fun AddEditRecordDialog(
         1 -> "Combustível / Recarga (R$)"
         2 -> "Recarga de Energia (R$)"
         else -> "Abastecimento/Recarga (R$)"
+    }
+
+    val parsedDouble = { input: String ->
+        input.replace(",", ".").toDoubleOrNull() ?: 0.0
     }
 
     // Form inputs state
@@ -1157,16 +1234,37 @@ fun AddEditRecordDialog(
     var revenueStr by remember { mutableStateOf(recordToEdit?.revenue?.toString()?.replace(".", ",") ?: "") }
     var mealStr by remember { mutableStateOf(recordToEdit?.expenseMeal?.toString()?.replace(".", ",") ?: "") }
     
-    val defaultVehicleCost = if (vOwnership == 1) vRentCost else vOwnCost
+    val kmVal = parsedDouble(kmStr)
+    val calculatedSuggestedCost = remember(vOwnership, vRentWeeklyCost, vKmAllowance, vExtraKmCost, vOwnCost, kmVal) {
+        if (vOwnership == 1) {
+            val dailyRentBase = vRentWeeklyCost / 7.0
+            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / 7.0 else 0.0
+            val excessKm = if (vKmAllowance > 0.0) maxOf(0.0, kmVal - dailyAllowance) else 0.0
+            val extraKmCostValue = excessKm * vExtraKmCost
+            dailyRentBase + extraKmCostValue
+        } else {
+            vOwnCost
+        }
+    }
+
+    var isRentManuallyEdited by remember { mutableStateOf(false) }
 
     // If and only if addition is triggered, auto-fill configured daily ownership cost or lastRent
-    var rentStr by remember(recordToEdit, defaultVehicleCost) {
+    var rentStr by remember(recordToEdit) {
         mutableStateOf(
             recordToEdit?.expenseRent?.toString()?.replace(".", ",") 
-                ?: if (defaultVehicleCost > 0.0) String.format(Locale.US, "%.2f", defaultVehicleCost).replace(".", ",")
+                ?: if (calculatedSuggestedCost > 0.0) String.format(Locale.US, "%.2f", calculatedSuggestedCost).replace(".", ",")
                 else if (lastRent > 0) lastRent.toString().replace(".", ",") else ""
         )
     }
+
+    // Auto-update rent state if not manually modified
+    LaunchedEffect(calculatedSuggestedCost) {
+        if (!isRentManuallyEdited && !isEdit) {
+            rentStr = String.format(Locale.US, "%.2f", calculatedSuggestedCost).replace(".", ",")
+        }
+    }
+
     var fuelStr by remember { mutableStateOf(recordToEdit?.expenseFuel?.toString()?.replace(".", ",") ?: "") }
     var miscStr by remember { mutableStateOf(recordToEdit?.expenseMisc?.toString()?.replace(".", ",") ?: "") }
     var descStr by remember { mutableStateOf(recordToEdit?.description ?: "") }
@@ -1427,7 +1525,10 @@ fun AddEditRecordDialog(
                         )
                         OutlinedTextField(
                             value = rentStr,
-                            onValueChange = { rentStr = it },
+                            onValueChange = { 
+                                rentStr = it 
+                                isRentManuallyEdited = true
+                            },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = BentoTextDark,
@@ -1441,6 +1542,37 @@ fun AddEditRecordDialog(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth().testTag("rent_input")
                         )
+                        if (vOwnership == 1 && vRentWeeklyCost > 0.0) {
+                            val baseDay = vRentWeeklyCost / 7.0
+                            val dailyAllowance = if (vKmAllowance > 0.0) vKmAllowance / 7.0 else 0.0
+                            val exceeded = if (vKmAllowance > 0.0) maxOf(0.0, kmVal - dailyAllowance) else 0.0
+                            val excessCost = exceeded * vExtraKmCost
+                            Text(
+                                text = "Sugerido: R$ ${String.format(Locale.US, "%.2f", calculatedSuggestedCost)} (R$ ${String.format(Locale.US, "%.2f", baseDay)} base + R$ ${String.format(Locale.US, "%.2f", excessCost)} extra)",
+                                fontSize = 10.sp,
+                                color = BentoPrimaryBlue,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .padding(top = 2.dp)
+                                    .clickable {
+                                        rentStr = String.format(Locale.US, "%.2f", calculatedSuggestedCost).replace(".", ",")
+                                        isRentManuallyEdited = false
+                                    }
+                            )
+                        } else if (vOwnership == 0 && vOwnCost > 0.0) {
+                            Text(
+                                text = "Sugerido (Posses + Amort.): R$ ${String.format(Locale.US, "%.2f", vOwnCost)}",
+                                fontSize = 10.sp,
+                                color = BentoPrimaryBlue,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .padding(top = 2.dp)
+                                    .clickable {
+                                        rentStr = String.format(Locale.US, "%.2f", vOwnCost).replace(".", ",")
+                                        isRentManuallyEdited = false
+                                    }
+                            )
+                        }
                     }
                 }
 
@@ -2078,6 +2210,8 @@ fun MonthlyGoalProgressBar(
 @Composable
 fun SettingsTab(
     viewModel: DriverViewModel,
+    googleSignInClient: com.google.android.gms.auth.api.signin.GoogleSignInClient,
+    onSignInTrigger: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val themeMode by viewModel.appThemeMode.collectAsStateWithLifecycle()
@@ -2092,6 +2226,9 @@ fun SettingsTab(
     val fPriceEstimate by viewModel.fuelPriceEstimate.collectAsStateWithLifecycle()
     val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
     val vRentCost by viewModel.vehicleRentCost.collectAsStateWithLifecycle()
+    val vRentWeeklyCost by viewModel.vehicleRentWeeklyCost.collectAsStateWithLifecycle()
+    val vKmAllowance by viewModel.vehicleKmAllowance.collectAsStateWithLifecycle()
+    val vExtraKmCost by viewModel.vehicleExtraKmCost.collectAsStateWithLifecycle()
     val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
 
     val googleEmail by viewModel.googleUserEmail.collectAsStateWithLifecycle()
@@ -2102,39 +2239,6 @@ fun SettingsTab(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-
-    val gso = remember {
-        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail()
-            .requestProfile()
-            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
-            .build()
-    }
-    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
-
-    val signInLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-            try {
-                val account = task.getResult(ApiException::class.java)
-                if (account != null) {
-                    val email = account.email
-                    if (email != null) {
-                        viewModel.onGoogleSignInSuccess(
-                            email = email,
-                            displayName = account.displayName,
-                            photoUrl = account.photoUrl?.toString()
-                        )
-                        Toast.makeText(context, "Conectado ao Google: $email", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Falha na conexão Google: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     var goalInput by remember(monthlyGoal) { 
         mutableStateOf(if (monthlyGoal > 0.0) String.format(Locale.US, "%.2f", monthlyGoal) else "") 
@@ -2149,6 +2253,15 @@ fun SettingsTab(
     }
     var rentCostInput by remember(vRentCost) { 
         mutableStateOf(String.format(Locale.US, "%.2f", vRentCost).replace(".", ",")) 
+    }
+    var rentWeeklyCostInput by remember(vRentWeeklyCost) { 
+        mutableStateOf(String.format(Locale.US, "%.2f", vRentWeeklyCost).replace(".", ",")) 
+    }
+    var kmAllowanceInput by remember(vKmAllowance) { 
+        mutableStateOf(String.format(Locale.US, "%.1f", vKmAllowance).replace(".", ",")) 
+    }
+    var extraKmCostInput by remember(vExtraKmCost) { 
+        mutableStateOf(String.format(Locale.US, "%.2f", vExtraKmCost).replace(".", ",")) 
     }
     var ownCostInput by remember(vOwnCost) { 
         mutableStateOf(String.format(Locale.US, "%.2f", vOwnCost).replace(".", ",")) 
@@ -2481,10 +2594,42 @@ fun SettingsTab(
                         )
                     } else {
                         OutlinedTextField(
-                            value = rentCostInput,
-                            onValueChange = { rentCostInput = it },
-                            label = { Text("Valor do Aluguel Diário (R$)", fontSize = 11.sp) },
-                            placeholder = { Text("Ex: 60,00") },
+                            value = rentWeeklyCostInput,
+                            onValueChange = { rentWeeklyCostInput = it },
+                            label = { Text("Valor do Aluguel Semanal (R$)", fontSize = 11.sp) },
+                            placeholder = { Text("Ex: 420,00") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+                        OutlinedTextField(
+                            value = kmAllowanceInput,
+                            onValueChange = { kmAllowanceInput = it },
+                            label = { Text("Franquia Semanal de KM (KM)", fontSize = 11.sp) },
+                            placeholder = { Text("Ex: 1000") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+                        OutlinedTextField(
+                            value = extraKmCostInput,
+                            onValueChange = { extraKmCostInput = it },
+                            label = { Text("Custo Extra por KM Excedido (R$)", fontSize = 11.sp) },
+                            placeholder = { Text("Ex: 0,50") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
@@ -2497,7 +2642,7 @@ fun SettingsTab(
                             )
                         )
                         Text(
-                            text = "O valor do aluguel diário será pré-carregado no campo de aluguel por padrão nas novas atividades.",
+                            text = "O aluguel semanal será rateado em diárias (Valor Semanal / 7). Quando você lançar a atividade diária, o aplicativo também vai sugerir acréscimos caso você exceda a franquia de KM diária proporcional.",
                             fontSize = 11.sp,
                             color = BentoTextSlate
                         )
@@ -2514,9 +2659,16 @@ fun SettingsTab(
                                 if (cons > 0) viewModel.setVehicleConsumption(cons)
                                 if (prc > 0) viewModel.setFuelPriceEstimate(prc)
 
-                                val rentC = parsedDouble(rentCostInput)
+                                val rentWeeklyC = parsedDouble(rentWeeklyCostInput)
+                                val kmAllowC = parsedDouble(kmAllowanceInput)
+                                val extraKmC = parsedDouble(extraKmCostInput)
+                                val rentC = rentWeeklyC / 7.0 // keep daily Rent cost synched as well
                                 val ownC = parsedDouble(ownCostInput)
+
                                 viewModel.setVehicleRentCost(rentC)
+                                viewModel.setVehicleRentWeeklyCost(rentWeeklyC)
+                                viewModel.setVehicleKmAllowance(kmAllowC)
+                                viewModel.setVehicleExtraKmCost(extraKmC)
                                 viewModel.setVehicleOwnCost(ownC)
 
                                 focusManager.clearFocus()
@@ -2752,7 +2904,7 @@ fun SettingsTab(
                         }
                     } else {
                         Button(
-                            onClick = { signInLauncher.launch(googleSignInClient.signInIntent) },
+                            onClick = { onSignInTrigger() },
                             colors = ButtonDefaults.buttonColors(containerColor = BentoBg),
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, BentoBorder),
@@ -3073,5 +3225,433 @@ fun SettingsTab(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ProfileTab(
+    viewModel: DriverViewModel,
+    googleSignInClient: com.google.android.gms.auth.api.signin.GoogleSignInClient,
+    onSignInTrigger: () -> Unit,
+    onNavigateToSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val googleEmail by viewModel.googleUserEmail.collectAsStateWithLifecycle()
+    val googleName by viewModel.googleUserName.collectAsStateWithLifecycle()
+    val googlePhoto by viewModel.googleUserPhotoUrl.collectAsStateWithLifecycle()
+    val driveFolder by viewModel.driveFolderName.collectAsStateWithLifecycle()
+    
+    val allRecords by viewModel.allRecords.collectAsStateWithLifecycle(initialValue = emptyList())
+    
+    // Stats computations
+    val totalDays = allRecords.size
+    val totalRevenue = allRecords.sumOf { it.revenue }
+    val totalHours = allRecords.sumOf { it.hoursWorked }
+    val totalKm = allRecords.sumOf { it.kmDriven }
+    val totalFuel = allRecords.sumOf { it.expenseFuel }
+    val totalRent = allRecords.sumOf { it.expenseRent }
+    val totalMeal = allRecords.sumOf { it.expenseMeal }
+    val totalMisc = allRecords.sumOf { it.expenseMisc }
+    val totalExpenses = totalFuel + totalRent + totalMeal + totalMisc
+    val netProfit = totalRevenue - totalExpenses
+    val avgHourlyRate = if (totalHours > 0.0) netProfit / totalHours else 0.0
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Upper section: User Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = BentoSurface),
+            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (googleEmail != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(BentoPrimaryBlue.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (googlePhoto != null) {
+                            AsyncImage(
+                                model = googlePhoto,
+                                contentDescription = "Foto de Perfil",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(androidx.compose.foundation.shape.CircleShape),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        } else {
+                            // fall back letter avatar
+                            Text(
+                                text = (googleName ?: googleEmail ?: "U").take(1).uppercase(),
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoPrimaryBlue
+                            )
+                        }
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = googleName ?: "Usuário Google",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Black,
+                            color = BentoTextDark,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = googleEmail ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = BentoTextSlate,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(BentoGreenBg)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Conta Google Conectada",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = BentoGreenText
+                            )
+                        }
+                    }
+                } else {
+                    // Logged out display
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(BentoTextSlate.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = null,
+                            tint = BentoTextSlate,
+                            modifier = Modifier.size(64.dp)
+                        )
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Piloto Anônimo",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Black,
+                            color = BentoTextDark
+                        )
+                        Text(
+                            text = "Sua conta não está integrada ao Google",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = BentoTextSlate
+                        )
+                    }
+
+                    Button(
+                        onClick = { onSignInTrigger() },
+                        colors = ButtonDefaults.buttonColors(containerColor = BentoPrimaryBlue),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Default.Login, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Iniciar Login com o Google", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Stats Header
+        Text(
+            text = "Minhas Estatísticas Globais",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = BentoTextDark,
+            modifier = Modifier.padding(start = 4.dp)
+        )
+
+        // Bento grid style layout for general summary stats
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.TrendingUp, contentDescription = null, tint = BentoGreenText, modifier = Modifier.size(16.dp))
+                        Text("Lucro Líquido", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoTextSlate)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "R$ %.2f", netProfit),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (netProfit >= 0) BentoGreenText else BentoRedText
+                    )
+                    Text("Total acumulado", fontSize = 9.sp, color = BentoTextSlate)
+                }
+            }
+
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.AccessTime, contentDescription = null, tint = BentoPrimaryBlue, modifier = Modifier.size(16.dp))
+                        Text("Ganho por Hora", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoTextSlate)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "R$ %.2f/h", avgHourlyRate),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = BentoPrimaryBlue
+                    )
+                    Text("Média por hora real", fontSize = 9.sp, color = BentoTextSlate)
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.DirectionsCar, contentDescription = null, tint = BentoPrimaryBlue, modifier = Modifier.size(16.dp))
+                        Text("Dias Trabalhados", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoTextSlate)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "$totalDays dias",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextDark
+                    )
+                    Text("Lançamentos no app", fontSize = 9.sp, color = BentoTextSlate)
+                }
+            }
+
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.3f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Speed, contentDescription = null, tint = BentoPrimaryBlue, modifier = Modifier.size(16.dp))
+                        Text("KM Rodados", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BentoTextSlate)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "%.0f km", totalKm),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextDark
+                    )
+                    Text("Distância percorrida", fontSize = 9.sp, color = BentoTextSlate)
+                }
+            }
+        }
+
+        // Expanded financial breakdown block
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = BentoSurface),
+            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f))
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "DETALHAMENTO HISTÓRICO",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = BentoTextSlate,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Faturamento Bruto", color = BentoTextDark, fontSize = 13.sp)
+                    Text(String.format(Locale("pt", "BR"), "R$ %.2f", totalRevenue), color = BentoGreenText, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                HorizontalDivider(color = BentoBorder.copy(alpha = 0.3f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Gasto c/ Combustível", color = BentoTextDark, fontSize = 13.sp)
+                    Text(String.format(Locale("pt", "BR"), "- R$ %.2f", totalFuel), color = BentoRedText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Custos do Veículo", color = BentoTextDark, fontSize = 13.sp)
+                    Text(String.format(Locale("pt", "BR"), "- R$ %.2f", totalRent), color = BentoRedText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Alimentação", color = BentoTextDark, fontSize = 13.sp)
+                    Text(String.format(Locale("pt", "BR"), "- R$ %.2f", totalMeal), color = BentoRedText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Outras Despesas", color = BentoTextDark, fontSize = 13.sp)
+                    Text(String.format(Locale("pt", "BR"), "- R$ %.2f", totalMisc), color = BentoRedText, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                }
+
+                HorizontalDivider(color = BentoBorder.copy(alpha = 0.3f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Lucro Líquido Real", color = BentoTextDark, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "R$ %.2f", netProfit),
+                        color = if (netProfit >= 0) BentoGreenText else BentoRedText,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 16.sp
+                    )
+                }
+            }
+        }
+
+        // Google Drive Status section
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = BentoSurface),
+            border = BorderStroke(1.dp, BentoBorder.copy(alpha = 0.4f))
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Cloud, contentDescription = null, tint = BentoPrimaryBlue)
+                    Text(
+                        text = "INTEGRAÇÃO GOOGLE DRIVE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = BentoTextSlate,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                Text(
+                    text = if (googleEmail != null) {
+                        "Sincronização ativa na pasta '$driveFolder' da sua conta Google Drive. Seus fechamentos semanais são carregados automaticamente em tempo real."
+                    } else {
+                        "Os seus dados estão salvos de forma 100% segura apenas no seu dispositivo local. Integrando com o Google Drive você pode gerar relatórios na nuvem a qualquer hora."
+                    },
+                    fontSize = 12.sp,
+                    color = BentoTextSlate
+                )
+
+                if (googleEmail != null) {
+                    Button(
+                        onClick = onNavigateToSettings,
+                        colors = ButtonDefaults.buttonColors(containerColor = BentoBg),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, BentoBorder),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 10.dp)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, tint = BentoPrimaryBlue, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Gerenciar Pasta de Backup", color = BentoTextDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Sign Out at the very bottom
+        if (googleEmail != null) {
+            OutlinedButton(
+                onClick = {
+                    googleSignInClient.signOut().addOnCompleteListener {
+                        viewModel.onGoogleSignOut()
+                        Toast.makeText(context, "Conta Google desconectada.", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, BentoRedText.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = BentoRedText),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp)
+            ) {
+                Icon(Icons.Default.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Deslogar Conta Google", fontWeight = FontWeight.Bold)
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(48.dp))
     }
 }
