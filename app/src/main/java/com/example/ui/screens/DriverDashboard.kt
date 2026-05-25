@@ -38,14 +38,24 @@ import com.example.viewmodel.PeriodSummary
 import com.example.viewmodel.PeriodView
 import java.text.SimpleDateFormat
 import java.util.*
+import android.widget.Toast
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.android.gms.common.api.ApiException
+import com.example.data.GoogleDriveHelper
+import kotlinx.coroutines.launch
 
-// Creative Direction: Bento Grid Design Theme (Light modern, pure whites, slate 900 text, cozy shadows)
-private val BentoBg = Color(0xFFF7F9FF)
-private val BentoTextDark = Color(0xFF0F172A)
-private val BentoTextSlate = Color(0xFF64748B)
-private val BentoPrimaryBlue = Color(0xFF2563EB)
-private val BentoBorder = Color(0xFFE2E8F0)
-private val BentoSurface = Color(0xFFFFFFFF)
+// Creative Direction: Bento Grid Design Theme (Dynamic Dark/Light modern, cozy shadows)
+private val BentoBg: Color @Composable get() = MaterialTheme.colorScheme.background
+private val BentoTextDark: Color @Composable get() = MaterialTheme.colorScheme.onBackground
+private val BentoTextSlate: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
+private val BentoPrimaryBlue: Color @Composable get() = MaterialTheme.colorScheme.primary
+private val BentoBorder: Color @Composable get() = MaterialTheme.colorScheme.outline
+private val BentoSurface: Color @Composable get() = MaterialTheme.colorScheme.surface
 
 private val BentoOrangeBg = Color(0xFFFFEDD5)
 private val BentoOrangeText = Color(0xFFEA580C)
@@ -55,6 +65,9 @@ private val BentoGreenText = Color(0xFF16A34A)
 
 private val BentoRedBg = Color(0xFFFEE2E2)
 private val BentoRedText = Color(0xFFDC2626)
+
+private val BentoPurpleBg = Color(0xFFF3E8FF)
+private val BentoPurpleText = Color(0xFF7C3AED)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,7 +80,10 @@ fun DriverDashboardScreen(
     val summary by viewModel.periodSummary.collectAsStateWithLifecycle()
     val records by viewModel.filteredRecords.collectAsStateWithLifecycle()
     val editingRecord by viewModel.editingRecord.collectAsStateWithLifecycle()
+    val monthlyGoal by viewModel.monthlyRevenueGoal.collectAsStateWithLifecycle()
+    val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
 
+    var activeTab by remember { mutableStateOf(0) } // 0 = Painel (Bento grid), 1 = Ajustes (Configurações)
     var showAddDialog by remember { mutableStateOf(false) }
     var prefilledStopwatchHours by remember { mutableStateOf<Double?>(null) }
 
@@ -78,13 +94,13 @@ fun DriverDashboardScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.DirectionsCar,
-                            contentDescription = "Driver",
+                            imageVector = if (activeTab == 0) Icons.Default.DirectionsCar else Icons.Default.Settings,
+                            contentDescription = if (activeTab == 0) "Driver" else "Ajustes",
                             tint = BentoPrimaryBlue,
                             modifier = Modifier.size(32.dp).padding(end = 8.dp)
                         )
                         Text(
-                            text = "Driver Finanças",
+                            text = if (activeTab == 0) "Fluxo Driver" else "Ajustes de Conta",
                             fontWeight = FontWeight.ExtraBold,
                             color = BentoTextDark,
                             fontSize = 22.sp,
@@ -98,99 +114,164 @@ fun DriverDashboardScreen(
                 )
             )
         },
+        bottomBar = {
+            NavigationBar(
+                containerColor = BentoSurface,
+                tonalElevation = 8.dp,
+                windowInsets = WindowInsets.navigationBars
+            ) {
+                NavigationBarItem(
+                    selected = activeTab == 0,
+                    onClick = { activeTab = 0 },
+                    icon = {
+                        Icon(
+                            imageVector = if (activeTab == 0) Icons.Default.Dashboard else Icons.Default.Dashboard,
+                            contentDescription = "Painel"
+                        )
+                    },
+                    label = { Text("Painel", fontWeight = if (activeTab == 0) FontWeight.Bold else FontWeight.Medium) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = BentoPrimaryBlue,
+                        selectedTextColor = BentoPrimaryBlue,
+                        indicatorColor = BentoPrimaryBlue.copy(alpha = 0.12f),
+                        unselectedIconColor = BentoTextSlate,
+                        unselectedTextColor = BentoTextSlate
+                    )
+                )
+                NavigationBarItem(
+                    selected = activeTab == 1,
+                    onClick = { activeTab = 1 },
+                    icon = {
+                        Icon(
+                            imageVector = if (activeTab == 1) Icons.Default.Settings else Icons.Default.Settings,
+                            contentDescription = "Ajustes"
+                        )
+                    },
+                    label = { Text("Ajustes", fontWeight = if (activeTab == 1) FontWeight.Bold else FontWeight.Medium) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = BentoPrimaryBlue,
+                        selectedTextColor = BentoPrimaryBlue,
+                        indicatorColor = BentoPrimaryBlue.copy(alpha = 0.12f),
+                        unselectedIconColor = BentoTextSlate,
+                        unselectedTextColor = BentoTextSlate
+                    )
+                )
+            }
+        },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = BentoPrimaryBlue,
-                contentColor = Color.White,
-                icon = { Icon(Icons.Default.Add, contentDescription = "Adicionar Lançamento") },
-                text = { Text("Lançar Dia", fontWeight = FontWeight.SemiBold) },
-                modifier = Modifier.testTag("add_record_fab")
-            )
+            if (activeTab == 0) {
+                ExtendedFloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = BentoPrimaryBlue,
+                    contentColor = Color.White,
+                    icon = { Icon(Icons.Default.Add, contentDescription = "Adicionar Lançamento") },
+                    text = { Text("Lançar Dia", fontWeight = FontWeight.SemiBold) },
+                    modifier = Modifier.testTag("add_record_fab")
+                )
+            }
         },
         containerColor = BentoBg
     ) { innerPadding ->
-        Column(
+        Crossfade(
+            targetState = activeTab,
+            label = "ScreenTransition",
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxSize()
                 .background(BentoBg)
-        ) {
-            // Period selector tabs: Diário, Semanal, Mensal (Bento Segmented Control style)
-            PeriodTabs(
-                selectedPeriod = currentPeriod,
-                onPeriodSelected = { viewModel.setPeriodType(it) }
-            )
-
-            // Date navigation controls
-            DateNavigator(
-                label = summary.periodLabel,
-                onPrevious = { viewModel.shiftPeriod(-1) },
-                onNext = { viewModel.shiftPeriod(1) },
-                onToday = { viewModel.setReferenceDate(System.currentTimeMillis()) }
-            )
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(bottom = 88.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Work stopwatch tracking card
-                item {
-                    WorkStopwatchCard(
-                        viewModel = viewModel,
-                        onLaunchWithTime = { hours ->
-                            prefilledStopwatchHours = hours
-                            showAddDialog = true
-                        }
-                    )
-                }
-
-                // KPIs metrics block
-                item {
-                    DashboardKPIs(summary = summary)
-                }
-
-                // Balance indicator visual bar (Faturamento x Despesas)
-                item {
-                    BalanceVisualBar(summary = summary)
-                }
-
-                // Table label & Action Button
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Tabela de Produtividade",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = BentoTextDark
+        ) { tab ->
+            when (tab) {
+                0 -> {
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Period selector tabs: Diário, Semanal, Mensal (Bento Segmented Control style)
+                        PeriodTabs(
+                            selectedPeriod = currentPeriod,
+                            onPeriodSelected = { viewModel.setPeriodType(it) }
                         )
-                        if (records.isNotEmpty()) {
-                            Text(
-                                text = "${records.size} registro(s)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = BentoTextSlate
-                            )
+
+                        // Date navigation controls
+                        DateNavigator(
+                            label = summary.periodLabel,
+                            onPrevious = { viewModel.shiftPeriod(-1) },
+                            onNext = { viewModel.shiftPeriod(1) },
+                            onToday = { viewModel.setReferenceDate(System.currentTimeMillis()) }
+                        )
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentPadding = PaddingValues(bottom = 88.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Work stopwatch tracking card
+                            item {
+                                WorkStopwatchCard(
+                                    viewModel = viewModel,
+                                    onLaunchWithTime = { hours ->
+                                        prefilledStopwatchHours = hours
+                                        showAddDialog = true
+                                    }
+                                )
+                            }
+
+                            // Interactive Monthly Revenue Target Gauge if configured
+                            if (monthlyGoal > 0.0) {
+                                item {
+                                    MonthlyGoalProgressBar(viewModel = viewModel, goal = monthlyGoal)
+                                }
+                            }
+
+                            // KPIs metrics block
+                            item {
+                                DashboardKPIs(summary = summary, vOwnership = vOwnership)
+                            }
+
+                            // Balance indicator visual bar (Faturamento x Despesas)
+                            item {
+                                BalanceVisualBar(summary = summary)
+                            }
+
+                            // Table label & Action Button
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Tabela de Produtividade",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextDark
+                                    )
+                                    if (records.isNotEmpty()) {
+                                        Text(
+                                            text = "${records.size} registro(s)",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = BentoTextSlate
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Financial table matching user requested explicit columns
+                            item {
+                                if (records.isEmpty()) {
+                                    EmptyStateCard()
+                                } else {
+                                    FinancialTable(
+                                        records = records,
+                                        onRecordClick = { viewModel.selectRecordForEdit(it) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-
-                // Financial table matching user requested explicit columns
-                item {
-                    if (records.isEmpty()) {
-                        EmptyStateCard()
-                    } else {
-                        FinancialTable(
-                            records = records,
-                            onRecordClick = { viewModel.selectRecordForEdit(it) }
-                        )
-                    }
+                1 -> {
+                    // Custom Bento settings/adjustment deck
+                    SettingsTab(viewModel = viewModel)
                 }
             }
         }
@@ -334,7 +415,10 @@ fun DateNavigator(
 }
 
 @Composable
-fun DashboardKPIs(summary: PeriodSummary) {
+fun DashboardKPIs(
+    summary: PeriodSummary,
+    vOwnership: Int = 1
+) {
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -483,22 +567,28 @@ fun DashboardKPIs(summary: PeriodSummary) {
                     }
                     Column {
                         Text(
-                            text = "Ganho / Hora",
+                            text = "Faturamento / Hora",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextSlate
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = String.format(Locale("pt", "BR"), "R$ %.2f/h", summary.netHourlyRate),
+                            text = String.format(Locale("pt", "BR"), "R$ %.2f/h", summary.grossHourlyRate),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Black,
                             color = BentoTextDark,
                             letterSpacing = (-0.5).sp
                         )
                         Text(
-                            text = String.format(Locale("pt", "BR"), "R$ %.2f/min", summary.netMinutelyRate),
+                            text = String.format(Locale("pt", "BR"), "Líq (Lucro): R$ %.2f/h", summary.netHourlyRate),
                             fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoGreenText
+                        )
+                        Text(
+                            text = String.format(Locale("pt", "BR"), "R$ %.2f/min", summary.netMinutelyRate),
+                            fontSize = 9.sp,
                             color = BentoTextSlate
                         )
                     }
@@ -532,22 +622,28 @@ fun DashboardKPIs(summary: PeriodSummary) {
                     }
                     Column {
                         Text(
-                            text = "Rendimento / Km",
+                            text = "Rendimento / Km (Bruto)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = BentoTextSlate
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = String.format(Locale("pt", "BR"), "R$ %.2f/km", summary.profitPerKm),
+                            text = String.format(Locale("pt", "BR"), "R$ %.2f/km", summary.grossRevenuePerKm),
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Black,
                             color = BentoTextDark,
                             letterSpacing = (-0.5).sp
                         )
                         Text(
-                            text = String.format(Locale("pt", "BR"), "Custo: R$ %.2f/km", summary.costPerKm),
+                            text = String.format(Locale("pt", "BR"), "Líq (Lucro): R$ %.2f/km", summary.profitPerKm),
                             fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoGreenText
+                        )
+                        Text(
+                            text = String.format(Locale("pt", "BR"), "Custo: R$ %.2f/km", summary.costPerKm),
+                            fontSize = 9.sp,
                             color = BentoTextSlate
                         )
                     }
@@ -692,6 +788,41 @@ fun DashboardKPIs(summary: PeriodSummary) {
                             modifier = Modifier
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(6.dp))
+                                .background(BentoPurpleBg),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocalGasStation,
+                                contentDescription = null,
+                                tint = BentoPurpleText,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        Text("Abastecimento / Recarga", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextDark)
+                    }
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "- R$ %.2f", summary.totalFuel),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = BentoRedText
+                    )
+                }
+
+                HorizontalDivider(color = BentoBorder.copy(alpha = 0.5f))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(Color(0xFFF3F4F6)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -702,7 +833,7 @@ fun DashboardKPIs(summary: PeriodSummary) {
                                 modifier = Modifier.size(16.dp)
                             )
                         }
-                        Text("Aluguel do Veículo", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextDark)
+                        Text(if (vOwnership == 1) "Aluguel do Veículo" else "Custos de Posse (Veículo)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = BentoTextDark)
                     }
                     Text(
                         text = String.format(Locale("pt", "BR"), "- R$ %.2f", summary.totalRent),
@@ -756,6 +887,7 @@ fun BalanceVisualBar(summary: PeriodSummary) {
             val mealRatio = if (total > 0) (summary.totalMeal / total).toFloat().coerceIn(0f..1f) else 0f
             val rentRatio = if (total > 0) (summary.totalRent / total).toFloat().coerceIn(0f..1f) else 0f
             val miscRatio = if (total > 0) (summary.totalMisc / total).toFloat().coerceIn(0f..1f) else 0f
+            val fuelRatio = if (total > 0) (summary.totalFuel / total).toFloat().coerceIn(0f..1f) else 0f
             val netRatio = if (total > 0) (summary.netProfit / total).toFloat().coerceIn(0f..1f) else 1f
 
             Box(
@@ -780,6 +912,14 @@ fun BalanceVisualBar(summary: PeriodSummary) {
                                 .fillMaxHeight()
                                 .weight(mealRatio.coerceAtLeast(0.001f))
                                 .background(BentoOrangeText) // Amber Food
+                        )
+                    }
+                    if (fuelRatio > 0) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(fuelRatio.coerceAtLeast(0.001f))
+                                .background(BentoPurpleText) // Purple Fuel
                         )
                     }
                     if (rentRatio > 0) {
@@ -808,6 +948,7 @@ fun BalanceVisualBar(summary: PeriodSummary) {
             ) {
                 LegendItem(color = BentoGreenText, label = "Lucro Líquido")
                 LegendItem(color = BentoOrangeText, label = "Alimentação")
+                LegendItem(color = BentoPurpleText, label = "Abastecimento")
                 LegendItem(color = BentoPrimaryBlue, label = "Aluguel")
                 LegendItem(color = BentoRedText, label = "Miscelâneas")
             }
@@ -991,6 +1132,17 @@ fun AddEditRecordDialog(
 
     // Fetch the last registered rent to auto-fill for nice user accessibility
     val lastRent by viewModel.lastRentValue.collectAsStateWithLifecycle()
+    val vehicleType by viewModel.vehicleType.collectAsStateWithLifecycle()
+    val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
+    val vRentCost by viewModel.vehicleRentCost.collectAsStateWithLifecycle()
+    val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
+
+    val fuelLabel = when (vehicleType) {
+        0 -> "Abastecimento (Combustão) (R$)"
+        1 -> "Combustível / Recarga (R$)"
+        2 -> "Recarga de Energia (R$)"
+        else -> "Abastecimento/Recarga (R$)"
+    }
 
     // Form inputs state
     var dateMillis by remember { mutableStateOf(recordToEdit?.dateMillis ?: System.currentTimeMillis()) }
@@ -1004,13 +1156,18 @@ fun AddEditRecordDialog(
     var kmStr by remember { mutableStateOf(recordToEdit?.kmDriven?.toString()?.replace(".", ",") ?: "") }
     var revenueStr by remember { mutableStateOf(recordToEdit?.revenue?.toString()?.replace(".", ",") ?: "") }
     var mealStr by remember { mutableStateOf(recordToEdit?.expenseMeal?.toString()?.replace(".", ",") ?: "") }
-    // If and only if addition is triggered and lastRent exists, auto-fill the lastRent value to save repetitive work!
-    var rentStr by remember {
+    
+    val defaultVehicleCost = if (vOwnership == 1) vRentCost else vOwnCost
+
+    // If and only if addition is triggered, auto-fill configured daily ownership cost or lastRent
+    var rentStr by remember(recordToEdit, defaultVehicleCost) {
         mutableStateOf(
             recordToEdit?.expenseRent?.toString()?.replace(".", ",") 
-                ?: if (lastRent > 0) lastRent.toString().replace(".", ",") else ""
+                ?: if (defaultVehicleCost > 0.0) String.format(Locale.US, "%.2f", defaultVehicleCost).replace(".", ",")
+                else if (lastRent > 0) lastRent.toString().replace(".", ",") else ""
         )
     }
+    var fuelStr by remember { mutableStateOf(recordToEdit?.expenseFuel?.toString()?.replace(".", ",") ?: "") }
     var miscStr by remember { mutableStateOf(recordToEdit?.expenseMisc?.toString()?.replace(".", ",") ?: "") }
     var descStr by remember { mutableStateOf(recordToEdit?.description ?: "") }
 
@@ -1262,7 +1419,7 @@ fun AddEditRecordDialog(
                     // Rent expense input
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Aluguel Veículo (R$)",
+                            text = if (vOwnership == 1) "Aluguel Veículo (R$)" else "Posse / Custos (R$)",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = BentoTextSlate,
@@ -1287,31 +1444,62 @@ fun AddEditRecordDialog(
                     }
                 }
 
-                // Misc expenses input
-                Column {
-                    Text(
-                        text = "Miscelâneas / Outros Custos (R$)",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = BentoTextSlate,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                    OutlinedTextField(
-                        value = miscStr,
-                        onValueChange = { miscStr = it },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = BentoTextDark,
-                            unfocusedTextColor = BentoTextDark,
-                            focusedBorderColor = BentoPrimaryBlue,
-                            unfocusedBorderColor = BentoBorder,
-                            focusedContainerColor = Color(0xFFF8FAFC),
-                            unfocusedContainerColor = Color(0xFFF8FAFC)
-                        ),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("misc_input")
-                    )
+                // Fuel & Misc expenses input row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = fuelLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BentoTextSlate,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        OutlinedTextField(
+                            value = fuelStr,
+                            onValueChange = { fuelStr = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark,
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedContainerColor = Color(0xFFF8FAFC),
+                                unfocusedContainerColor = Color(0xFFF8FAFC)
+                            ),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("fuel_input")
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Miscelâneas (R$)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = BentoTextSlate,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        OutlinedTextField(
+                            value = miscStr,
+                            onValueChange = { miscStr = it },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark,
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedContainerColor = Color(0xFFF8FAFC),
+                                unfocusedContainerColor = Color(0xFFF8FAFC)
+                            ),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("misc_input")
+                        )
+                    }
                 }
 
                 // Description/Notes input
@@ -1408,6 +1596,7 @@ fun AddEditRecordDialog(
                             val rev = revenueStr.toSafeDouble()
                             val meal = mealStr.toSafeDouble()
                             val rent = rentStr.toSafeDouble()
+                            val fuel = fuelStr.toSafeDouble()
                             val misc = miscStr.toSafeDouble()
 
                             // Basic validation
@@ -1425,6 +1614,7 @@ fun AddEditRecordDialog(
                                 expenseMeal = meal,
                                 expenseRent = rent,
                                 expenseMisc = misc,
+                                expenseFuel = fuel,
                                 description = descStr
                             )
                             safeDismiss()
@@ -1764,6 +1954,1123 @@ fun WorkStopwatchCard(
                     color = BentoTextSlate,
                     lineHeight = 15.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun MonthlyGoalProgressBar(
+    viewModel: DriverViewModel,
+    goal: Double,
+    modifier: Modifier = Modifier
+) {
+    val progressRevenue by viewModel.monthlyRevenueProgress.collectAsStateWithLifecycle()
+    val percentage = if (goal > 0) (progressRevenue / goal).toFloat() else 0f
+    val displayPercentage = (percentage * 100).coerceIn(0f, 100f)
+    val missingRevenue = (goal - progressRevenue).coerceAtLeast(0.0)
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = BentoSurface),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, BentoBorder)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(BentoPurpleBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Flag,
+                            contentDescription = null,
+                            tint = BentoPurpleText,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "META DE FATURAMENTO",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            color = BentoTextSlate,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Progresso Mensal",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BentoTextSlate
+                        )
+                    }
+                }
+                
+                Text(
+                    text = String.format(Locale("pt", "BR"), "%.0f%%", displayPercentage),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Black,
+                    color = BentoPurpleText
+                )
+            }
+
+            // Linear Progress Bar
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                LinearProgressIndicator(
+                    progress = { percentage.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(5.dp)),
+                    color = BentoPurpleText,
+                    trackColor = BentoPurpleBg
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "R$ %.2f", progressRevenue),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextDark
+                    )
+                    Text(
+                        text = String.format(Locale("pt", "BR"), "Meta: R$ %.2f", goal),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextSlate
+                    )
+                }
+            }
+
+            if (missingRevenue > 0.0) {
+                Text(
+                    text = String.format(Locale("pt", "BR"), "Faltam apenas R$ %.2f para atingir o seu objetivo do mês!", missingRevenue),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = BentoPurpleText
+                )
+            } else {
+                Text(
+                    text = "Parabéns! Você alcançou a sua meta mensal de faturamento! 🚀🏆",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = BentoGreenText
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsTab(
+    viewModel: DriverViewModel,
+    modifier: Modifier = Modifier
+) {
+    val themeMode by viewModel.appThemeMode.collectAsStateWithLifecycle()
+    val closureDay by viewModel.weeklyClosureDay.collectAsStateWithLifecycle()
+    val monthlyGoal by viewModel.monthlyRevenueGoal.collectAsStateWithLifecycle()
+    val driveFolder by viewModel.driveFolderName.collectAsStateWithLifecycle()
+    val formatReport by viewModel.reportFormat.collectAsStateWithLifecycle()
+    val summary by viewModel.periodSummary.collectAsStateWithLifecycle()
+    val records by viewModel.filteredRecords.collectAsStateWithLifecycle()
+    val vType by viewModel.vehicleType.collectAsStateWithLifecycle()
+    val vConsumption by viewModel.vehicleConsumption.collectAsStateWithLifecycle()
+    val fPriceEstimate by viewModel.fuelPriceEstimate.collectAsStateWithLifecycle()
+    val vOwnership by viewModel.vehicleOwnership.collectAsStateWithLifecycle()
+    val vRentCost by viewModel.vehicleRentCost.collectAsStateWithLifecycle()
+    val vOwnCost by viewModel.vehicleOwnCost.collectAsStateWithLifecycle()
+
+    val googleEmail by viewModel.googleUserEmail.collectAsStateWithLifecycle()
+    val googleName by viewModel.googleUserName.collectAsStateWithLifecycle()
+    val googlePhoto by viewModel.googleUserPhotoUrl.collectAsStateWithLifecycle()
+    val googleIsSyncing by viewModel.googleIsSyncing.collectAsStateWithLifecycle()
+
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+
+    val gso = remember {
+        GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
+            .build()
+    }
+    val googleSignInClient = remember { GoogleSignIn.getClient(context, gso) }
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+            try {
+                val account = task.getResult(ApiException::class.java)
+                if (account != null) {
+                    val email = account.email
+                    if (email != null) {
+                        viewModel.onGoogleSignInSuccess(
+                            email = email,
+                            displayName = account.displayName,
+                            photoUrl = account.photoUrl?.toString()
+                        )
+                        Toast.makeText(context, "Conectado ao Google: $email", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Falha na conexão Google: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    var goalInput by remember(monthlyGoal) { 
+        mutableStateOf(if (monthlyGoal > 0.0) String.format(Locale.US, "%.2f", monthlyGoal) else "") 
+    }
+    var folderInput by remember(driveFolder) { mutableStateOf(driveFolder) }
+
+    var consumptionInput by remember(vConsumption) { 
+        mutableStateOf(String.format(Locale.US, "%.1f", vConsumption).replace(".", ",")) 
+    }
+    var priceInput by remember(fPriceEstimate) { 
+        mutableStateOf(String.format(Locale.US, "%.2f", fPriceEstimate).replace(".", ",")) 
+    }
+    var rentCostInput by remember(vRentCost) { 
+        mutableStateOf(String.format(Locale.US, "%.2f", vRentCost).replace(".", ",")) 
+    }
+    var ownCostInput by remember(vOwnCost) { 
+        mutableStateOf(String.format(Locale.US, "%.2f", vOwnCost).replace(".", ",")) 
+    }
+
+    val parsedDouble = { input: String ->
+        input.replace(",", ".").toDoubleOrNull() ?: 0.0
+    }
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // App settings introduction card
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Row(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(BentoPrimaryBlue.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = BentoPrimaryBlue,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Ajustes e Configurações",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextDark
+                        )
+                        Text(
+                            text = "Personalize sua experiência de motorista e gerencie seus relatórios.",
+                            fontSize = 12.sp,
+                            color = BentoTextSlate
+                        )
+                    }
+                }
+            }
+        }
+
+        // Section 1: Visual Theme (Light / Dark)
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "APARÊNCIA DO APLICATIVO",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextSlate,
+                        letterSpacing = 1.sp
+                    )
+
+                    // Three columns segmented buttons for theme choice
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(0 to "Sistema", 1 to "Claro", 2 to "Escuro").forEach { (modeVal, label) ->
+                            val isSelected = themeMode == modeVal
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                    .clickable { viewModel.setAppThemeMode(modeVal) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else BentoTextDark
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 2: Faturamento Goal
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "OBJETIVO MENSAL",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextSlate,
+                        letterSpacing = 1.sp
+                    )
+
+                    Text(
+                        text = "Defina uma meta de faturamento bruto para acompanhar seu desempenho.",
+                        fontSize = 12.sp,
+                        color = BentoTextSlate
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = goalInput,
+                            onValueChange = { goalInput = it },
+                            label = { Text("Meta Mensal (R$)") },
+                            placeholder = { Text("Ex: 5000.00") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+
+                        Button(
+                            onClick = {
+                                val value = goalInput.toDoubleOrNull() ?: 0.0
+                                viewModel.setMonthlyRevenueGoal(value)
+                                focusManager.clearFocus()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BentoPrimaryBlue),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+                        ) {
+                            Text("Salvar", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section: Veículo & Eficiência
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "VEÍCULO & EFICIÊNCIA DE CUSTOS",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextSlate,
+                        letterSpacing = 1.sp
+                    )
+
+                    Text(
+                        text = "Acompanhe seus custos de combustível ou energia de forma inteligente de acordo com o tipo do seu veículo.",
+                        fontSize = 12.sp,
+                        color = BentoTextSlate
+                    )
+
+                    // Vehicle Type selector
+                    Text(
+                        text = "Tipo de motorização:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextDark
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(0 to "Combustão", 1 to "Híbrido", 2 to "Elétrico").forEach { (typeVal, label) ->
+                            val isSelected = vType == typeVal
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                    .clickable { viewModel.setVehicleType(typeVal) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else BentoTextDark
+                                )
+                            }
+                        }
+                    }
+
+                    // Autonomy/Consumption input & unit cost
+                    val consumptionLabel = if (vType == 2) "Eficiência (Km/kWh)" else "Consumo Médio (Km/L)"
+                    val priceLabel = if (vType == 2) "Preço Energia (R$/kWh)" else "Preço Combustível (R$/L)"
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = consumptionInput,
+                            onValueChange = { consumptionInput = it },
+                            label = { Text(consumptionLabel, fontSize = 11.sp) },
+                            placeholder = { Text(if (vType == 2) "Ex: 6,0" else "Ex: 11,5") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+
+                        OutlinedTextField(
+                            value = priceInput,
+                            onValueChange = { priceInput = it },
+                            label = { Text(priceLabel, fontSize = 11.sp) },
+                            placeholder = { Text(if (vType == 2) "Ex: 0,90" else "Ex: 5,60") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+                    }
+
+                    HorizontalDivider(color = BentoBorder.copy(alpha = 0.3f))
+
+                    Text(
+                        text = "Regime de Posse / Propriedade:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BentoTextDark
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(0 to "Próprio", 1 to "Alugado").forEach { (ownVal, label) ->
+                            val isSelected = vOwnership == ownVal
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                    .clickable { viewModel.setVehicleOwnership(ownVal) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else BentoTextDark
+                                )
+                            }
+                        }
+                    }
+
+                    if (vOwnership == 0) {
+                        OutlinedTextField(
+                            value = ownCostInput,
+                            onValueChange = { ownCostInput = it },
+                            label = { Text("Gastos Diários Estimados (Seguro, IPVA, Manut.)", fontSize = 11.sp) },
+                            placeholder = { Text("Ex: 15,00") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+                        Text(
+                            text = "Estes custos presumidos de posse (IPVA, seguro, manutenção geral e amortização de desgaste) serão pré-carregados ao lançar atividades diárias para calcular seu faturamento líquido real.",
+                            fontSize = 11.sp,
+                            color = BentoTextSlate
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = rentCostInput,
+                            onValueChange = { rentCostInput = it },
+                            label = { Text("Valor do Aluguel Diário (R$)", fontSize = 11.sp) },
+                            placeholder = { Text("Ex: 60,00") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BentoPrimaryBlue,
+                                unfocusedBorderColor = BentoBorder,
+                                focusedLabelColor = BentoPrimaryBlue,
+                                focusedTextColor = BentoTextDark,
+                                unfocusedTextColor = BentoTextDark
+                            )
+                        )
+                        Text(
+                            text = "O valor do aluguel diário será pré-carregado no campo de aluguel por padrão nas novas atividades.",
+                            fontSize = 11.sp,
+                            color = BentoTextSlate
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Button(
+                            onClick = {
+                                val cons = parsedDouble(consumptionInput)
+                                val prc = parsedDouble(priceInput)
+                                if (cons > 0) viewModel.setVehicleConsumption(cons)
+                                if (prc > 0) viewModel.setFuelPriceEstimate(prc)
+
+                                val rentC = parsedDouble(rentCostInput)
+                                val ownC = parsedDouble(ownCostInput)
+                                viewModel.setVehicleRentCost(rentC)
+                                viewModel.setVehicleOwnCost(ownC)
+
+                                focusManager.clearFocus()
+                                Toast.makeText(context, "Configurações de veículo salvas com sucesso!", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BentoPrimaryBlue),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Salvar Veículo", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                    }
+
+                    HorizontalDivider(color = BentoBorder.copy(alpha = 0.5f))
+
+                    // Running Cost Estimator results
+                    if (vConsumption > 0) {
+                        val costPerKm = fPriceEstimate / vConsumption
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(BentoPrimaryBlue.copy(alpha = 0.05f))
+                                .border(BorderStroke(1.dp, BentoPrimaryBlue.copy(alpha = 0.15f)), RoundedCornerShape(16.dp))
+                                .padding(16.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DirectionsCar,
+                                        contentDescription = null,
+                                        tint = BentoPrimaryBlue,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = "ESTIMADOR DE INSTANCIA DE CUSTO",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoPrimaryBlue
+                                    )
+                                }
+                                
+                                Text(
+                                    text = String.format(Locale("pt", "BR"), "Custo Estimado por Km Rodado: R$ %.3f / Km", costPerKm),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = BentoTextDark
+                                )
+
+                                Text(
+                                    text = "Isso significa que para cada 100 Km rodados, você investirá aproximadamente R$ ${String.format(Locale("pt", "BR"), "%.2f", costPerKm * 100)} em combustível/energia.",
+                                    fontSize = 11.sp,
+                                    color = BentoTextSlate
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 3: Weekly Closure Day selection
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "DIA DE INÍCIO DA SEMANA / CICLO",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black,
+                        color = BentoTextSlate,
+                        letterSpacing = 1.sp
+                    )
+
+                    Text(
+                        text = "Selecione o dia do fechamento para iniciar a soma semanal dos lucros de forma personalizada.",
+                        fontSize = 12.sp,
+                        color = BentoTextSlate
+                    )
+
+                    // Grid or Row of days
+                    val days = listOf(
+                        Calendar.MONDAY to "Seg",
+                        Calendar.TUESDAY to "Ter",
+                        Calendar.WEDNESDAY to "Qua",
+                        Calendar.THURSDAY to "Qui",
+                        Calendar.FRIDAY to "Sex",
+                        Calendar.SATURDAY to "Sáb",
+                        Calendar.SUNDAY to "Dom"
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        days.forEach { (dayVal, label) ->
+                            val isSelected = closureDay == dayVal
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                    .clickable { viewModel.setWeeklyClosureDay(dayVal) }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else BentoTextDark
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 4: Google Drive and Integration Share weekly report
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = BentoSurface),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, BentoBorder)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "INTEGRAÇÃO & GOOGLE DRIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            color = BentoTextSlate,
+                            letterSpacing = 1.sp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (googleEmail != null) BentoGreenBg else BentoOrangeBg)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (googleEmail != null) "Conectado" else "Modo Local",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (googleEmail != null) BentoGreenText else BentoOrangeText
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = "Conecte sua conta do Google de forma totalmente segura para automatizar a sincronização direta de fechamentos semanais (.csv ou .txt) em pastas personalizadas do seu Google Drive.",
+                        fontSize = 12.sp,
+                        color = BentoTextSlate
+                    )
+
+                    // Google Login / Context Connection Panel
+                    if (googleEmail != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(BentoBg)
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(BentoGreenBg),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Cloud,
+                                        contentDescription = null,
+                                        tint = BentoGreenText,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = googleName ?: "Usuário Conectado",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = BentoTextDark
+                                    )
+                                    Text(
+                                        text = googleEmail ?: "",
+                                        fontSize = 11.sp,
+                                        color = BentoTextSlate
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    googleSignInClient.signOut().addOnCompleteListener {
+                                        viewModel.onGoogleSignOut()
+                                        Toast.makeText(context, "Conta Google desconectada.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Logout,
+                                    contentDescription = "Sair",
+                                    tint = BentoRedText,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        Button(
+                            onClick = { signInLauncher.launch(googleSignInClient.signInIntent) },
+                            colors = ButtonDefaults.buttonColors(containerColor = BentoBg),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, BentoBorder),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccountCircle,
+                                contentDescription = null,
+                                tint = BentoPrimaryBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Entrar com uma Conta Google",
+                                fontWeight = FontWeight.Bold,
+                                color = BentoTextDark,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = folderInput,
+                        onValueChange = { 
+                            folderInput = it
+                            viewModel.setDriveFolderName(it)
+                        },
+                        label = { Text("Nome da Pasta no Google Drive") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BentoPrimaryBlue,
+                            unfocusedBorderColor = BentoBorder,
+                            focusedLabelColor = BentoPrimaryBlue,
+                            focusedTextColor = BentoTextDark,
+                            unfocusedTextColor = BentoTextDark
+                        )
+                    )
+
+                    // Format Toggle Checkbox/Segmented control
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Formato do Relatório Semanal:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = BentoTextDark
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("CSV" to "Planilha CSV", "TEXTO" to "Resumo em Texto").forEach { (fmtVal, label) ->
+                                val isSelected = formatReport == fmtVal
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSelected) BentoPrimaryBlue else BentoBg)
+                                        .clickable { viewModel.setReportFormat(fmtVal) }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) Color.White else BentoTextDark
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Action buttons
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (googleEmail != null) {
+                            Button(
+                                onClick = {
+                                    if (records.isEmpty()) {
+                                        Toast.makeText(context, "Sem registros na semana ativa para exportar!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        viewModel.googleIsSyncing.value = true
+                                        scope.launch {
+                                            try {
+                                                val email = googleEmail ?: ""
+                                                val token = GoogleDriveHelper.getAccessToken(context, email)
+                                                if (token == null) {
+                                                    Toast.makeText(context, "Erro ao obter autorização do Google Drive.", Toast.LENGTH_SHORT).show()
+                                                    viewModel.googleIsSyncing.value = false
+                                                    return@launch
+                                                }
+
+                                                val fileName: String
+                                                val mimeType: String
+                                                val content: String
+
+                                                if (formatReport == "CSV") {
+                                                    fileName = "Relatorio_Semanal_FluxoDriver_${summary.periodLabel.replace(" ", "_").replace("/", "-")}.csv"
+                                                    mimeType = "text/csv"
+                                                    val csvHeader = "Data,Horas Trabalhadas,Distancia_Km,Faturamento_R$,Alimentacao_R$,Aluguel_Midia_R$,Outros_R$,Combustivel_R$,Despesas_Totais_R$,Lucro_Liquido_R$\n"
+                                                    val csvRows = records.joinToString("\n") { r ->
+                                                        val dateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(r.dateMillis))
+                                                        val totalExp = r.expenseMeal + r.expenseRent + r.expenseMisc + r.expenseFuel
+                                                        String.format(
+                                                            Locale.US,
+                                                            "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+                                                            dateStr, r.hoursWorked, r.kmDriven, r.revenue, r.expenseMeal, r.expenseRent, r.expenseMisc, r.expenseFuel, totalExp, (r.revenue - totalExp)
+                                                        )
+                                                    }
+                                                    content = csvHeader + csvRows
+                                                } else {
+                                                    fileName = "Relatorio_Semanal_FluxoDriver_${summary.periodLabel.replace(" ", "_").replace("/", "-")}.txt"
+                                                    mimeType = "text/plain"
+                                                    content = """
+                                                        === RELATÓRIO DE FECHAMENTO SEMANAL ===
+                                                        Período Ativo: ${summary.periodLabel}
+                                                        Destino da Pasta: $driveFolder
+                                                        --------------------------------------------------
+                                                        FATURAMENTO BRUTO: R$ %.2f
+                                                        DESPESAS TOTAIS:   R$ %.2f
+                                                        LUCRO LÍQUIDO:     R$ %.2f
+                                                        
+                                                        DETALHAMENTO FINANCEIRO:
+                                                        - Combustível:         R$ %.2f
+                                                        - Alimentação:         R$ %.2f
+                                                        - Aluguel/Mídia:       R$ %.2f
+                                                        - Outras / Variáveis:  R$ %.2f
+                                                        
+                                                        MÉTRICAS DE EFICIÊNCIA:
+                                                        - Horas Conduzidas:  %.2f h
+                                                        - Distância Rodada:  %.2f Km
+                                                        - R$/Hora (Bruto):   R$ %.2f/h
+                                                        - R$/Hora (Líquido): R$ %.2f/h
+                                                        - R$/Km (Bruto):     R$ %.2f/km
+                                                        - R$/Km (Líquido):   R$ %.2f/km
+                                                        
+                                                        Relatório exportado e sincronizado com o Google Drive de forma segura.
+                                                    """.trimIndent().let { template ->
+                                                        String.format(
+                                                            Locale("pt", "BR"), template,
+                                                            summary.totalRevenue, summary.totalExpenses, summary.netProfit,
+                                                            summary.totalFuel, summary.totalMeal, summary.totalRent, summary.totalMisc,
+                                                            summary.totalHours, summary.totalKm,
+                                                            summary.grossHourlyRate, summary.netHourlyRate,
+                                                            summary.grossRevenuePerKm, summary.profitPerKm
+                                                        )
+                                                    }
+                                                }
+
+                                                val success = GoogleDriveHelper.uploadFileToDrive(
+                                                    token = token,
+                                                    folderName = driveFolder,
+                                                    fileName = fileName,
+                                                    mimeType = mimeType,
+                                                    content = content
+                                                )
+
+                                                if (success) {
+                                                    Toast.makeText(context, "Sincronizado na pasta '$driveFolder' do seu Google Drive!", Toast.LENGTH_LONG).show()
+                                                } else {
+                                                    GoogleDriveHelper.invalidateToken(context, token)
+                                                    Toast.makeText(context, "Erro ao gravar. Credenciais reiniciadas, tente novamente.", Toast.LENGTH_LONG).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, "Falha na sincronização: ${e.message}", Toast.LENGTH_LONG).show()
+                                            } finally {
+                                                viewModel.googleIsSyncing.value = false
+                                            }
+                                        }
+                                    }
+                                },
+                                enabled = !googleIsSyncing,
+                                colors = ButtonDefaults.buttonColors(containerColor = BentoPrimaryBlue),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 14.dp)
+                            ) {
+                                if (googleIsSyncing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Sincronizando...", fontWeight = FontWeight.Bold, color = Color.White)
+                                } else {
+                                    Icon(Icons.Default.CloudUpload, contentDescription = null, tint = Color.White)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Sincronizar no Google Drive", fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                if (records.isEmpty()) {
+                                    Toast.makeText(context, "Sem registros na semana ativa para exportar!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    if (formatReport == "CSV") {
+                                        val csvHeader = "Data,Horas Trabalhadas,Distancia_Km,Faturamento_R$,Alimentacao_R$,Aluguel_Midia_R$,Outros_R$,Combustivel_R$,Despesas_Totais_R$,Lucro_Liquido_R$\n"
+                                        val csvRows = records.joinToString("\n") { r ->
+                                            val dateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(r.dateMillis))
+                                            val totalExp = r.expenseMeal + r.expenseRent + r.expenseMisc + r.expenseFuel
+                                            String.format(
+                                                Locale.US,
+                                                "%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+                                                dateStr, r.hoursWorked, r.kmDriven, r.revenue, r.expenseMeal, r.expenseRent, r.expenseMisc, r.expenseFuel, totalExp, (r.revenue - totalExp)
+                                            )
+                                        }
+                                        val csvContent = csvHeader + csvRows
+
+                                        try {
+                                            val reportsDir = java.io.File(context.cacheDir, "reports")
+                                            if (!reportsDir.exists()) {
+                                                reportsDir.mkdirs()
+                                            }
+                                            val file = java.io.File(reportsDir, "Relatorio_Semanal_FluxoDriver.csv")
+                                            file.writeText(csvContent)
+                                            val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file
+                                            )
+
+                                            val sendIntent = android.content.Intent().apply {
+                                                action = android.content.Intent.ACTION_SEND
+                                                putExtra(android.content.Intent.EXTRA_STREAM, fileUri)
+                                                type = "text/csv"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, "Relatório Semanal - ${summary.periodLabel}")
+                                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            val shareIntent = android.content.Intent.createChooser(sendIntent, "Salvar Planilha na Pasta: $driveFolder")
+                                            context.startActivity(shareIntent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Erro ao exportar arquivo CSV: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        val textContent = """
+                                            === RELATÓRIO DE FECHAMENTO SEMANAL ===
+                                            Período Ativo: ${summary.periodLabel}
+                                            Destino da Pasta: $driveFolder
+                                            --------------------------------------------------
+                                            FATURAMENTO BRUTO: R$ %.2f
+                                            DESPESAS TOTAIS:   R$ %.2f
+                                            LUCRO LÍQUIDO:     R$ %.2f
+                                            
+                                            DETALHAMENTO FINANCEIRO:
+                                            - Combustível:         R$ %.2f
+                                            - Alimentação:         R$ %.2f
+                                            - Aluguel/Mídia:       R$ %.2f
+                                            - Outras / Variáveis:  R$ %.2f
+                                            
+                                            MÉTRICAS DE EFICIÊNCIA:
+                                            - Horas Conduzidas:  %.2f h
+                                            - Distância Rodada:  %.2f Km
+                                            - R$/Hora (Bruto):   R$ %.2f/h
+                                            - R$/Hora (Líquido): R$ %.2f/h
+                                            - R$/Km (Bruto):     R$ %.2f/km
+                                            - R$/Km (Líquido):   R$ %.2f/km
+                                            
+                                            Relatório exportado e sincronizado com o Google Drive de forma segura.
+                                        """.trimIndent().let { template ->
+                                            String.format(
+                                                Locale("pt", "BR"), template,
+                                                summary.totalRevenue, summary.totalExpenses, summary.netProfit,
+                                                summary.totalFuel, summary.totalMeal, summary.totalRent, summary.totalMisc,
+                                                summary.totalHours, summary.totalKm,
+                                                summary.grossHourlyRate, summary.netHourlyRate,
+                                                summary.grossRevenuePerKm, summary.profitPerKm
+                                            )
+                                        }
+
+                                        try {
+                                            val reportsDir = java.io.File(context.cacheDir, "reports")
+                                            if (!reportsDir.exists()) {
+                                                reportsDir.mkdirs()
+                                            }
+                                            val file = java.io.File(reportsDir, "Relatorio_Semanal_FluxoDriver.txt")
+                                            file.writeText(textContent)
+                                            val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file
+                                            )
+
+                                            val sendIntent = android.content.Intent().apply {
+                                                action = android.content.Intent.ACTION_SEND
+                                                putExtra(android.content.Intent.EXTRA_STREAM, fileUri)
+                                                type = "text/plain"
+                                                putExtra(android.content.Intent.EXTRA_SUBJECT, "Relatório Semanal - ${summary.periodLabel}")
+                                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            val shareIntent = android.content.Intent.createChooser(sendIntent, "Salvar Relatório na Pasta: $driveFolder")
+                                            context.startActivity(shareIntent)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Erro ao exportar arquivo TXT: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = BentoGreenText),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(vertical = 14.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Compartilhar Relatório Local", 
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
             }
         }
     }

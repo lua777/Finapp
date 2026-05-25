@@ -1,5 +1,5 @@
 {
-  "name": "Driver Finanças",
+  "name": "Fluxo Driver",
   "description": "Controle financeiro para motoristas de aplicativos, incluindo horas, quilometragem, faturamento e despesas, com relatórios diários, semanais e mensais.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

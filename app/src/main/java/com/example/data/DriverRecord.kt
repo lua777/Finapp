@@ -16,11 +16,12 @@ data class DriverRecord(
     val expenseMeal: Double, // Meal expenses (alimentação)
     val expenseRent: Double, // Rent expenses (aluguel)
     val expenseMisc: Double, // Miscellaneous expenses (miscelâneas)
+    val expenseFuel: Double = 0.0, // Fuel/Recharge expenses (abastecimento/recarga)
     val description: String = "" // Optional notes
 ) {
     // Derived properties
     val totalExpenses: Double
-        get() = expenseMeal + expenseRent + expenseMisc
+        get() = expenseMeal + expenseRent + expenseMisc + expenseFuel
 
     val netProfit: Double
         get() = revenue - totalExpenses
@@ -34,6 +35,9 @@ data class DriverRecord(
 
     val netMinutelyRate: Double
         get() = if (hoursWorked > 0) netProfit / (hoursWorked * 60) else 0.0
+
+    val grossRevenuePerKm: Double
+        get() = if (kmDriven > 0) revenue / kmDriven else 0.0
 
     val costPerKm: Double
         get() = if (kmDriven > 0) totalExpenses / kmDriven else 0.0

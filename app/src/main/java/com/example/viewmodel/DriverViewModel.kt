@@ -28,10 +28,13 @@ data class PeriodSummary(
     val totalMeal: Double = 0.0,
     val totalRent: Double = 0.0,
     val totalMisc: Double = 0.0,
+    val totalFuel: Double = 0.0,
     val totalExpenses: Double = 0.0,
     val netProfit: Double = 0.0,
+    val grossHourlyRate: Double = 0.0,
     val netHourlyRate: Double = 0.0,
     val netMinutelyRate: Double = 0.0,
+    val grossRevenuePerKm: Double = 0.0,
     val costPerKm: Double = 0.0,
     val profitPerKm: Double = 0.0
 )
@@ -39,11 +42,157 @@ data class PeriodSummary(
 class DriverViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: DriverRepository
+    private val prefs = application.getSharedPreferences("driver_prefs", android.content.Context.MODE_PRIVATE)
+
+    // Persistent settings states
+    val appThemeMode = MutableStateFlow(0) // 0 = System, 1 = Light, 2 = Dark
+    val weeklyClosureDay = MutableStateFlow(Calendar.MONDAY) // Calendar.MONDAY = 2, Calendar.SUNDAY = 1 etc
+    val monthlyRevenueGoal = MutableStateFlow(0.0) // 0.0 means no active goal
+    val driveFolderName = MutableStateFlow("Fluxo Driver")
+    val reportFormat = MutableStateFlow("CSV") // CSV or Text
+    val vehicleType = MutableStateFlow(0) // 0 = Combustão, 1 = Híbrido, 2 = Elétrico
+    val vehicleConsumption = MutableStateFlow(10.0) // Km/L or Km/kWh
+    val fuelPriceEstimate = MutableStateFlow(5.50) // Average cost per L or kWh
+    val vehicleOwnership = MutableStateFlow(0) // 0 = Próprio, 1 = Alugado
+    val vehicleRentCost = MutableStateFlow(0.0) // Cost of rental per day
+    val vehicleOwnCost = MutableStateFlow(0.0) // Cost of maintaining / finance / wear of own vehicle per day
+
+    // Google Integration Stats
+    val googleUserEmail = MutableStateFlow<String?>(null)
+    val googleUserName = MutableStateFlow<String?>(null)
+    val googleUserPhotoUrl = MutableStateFlow<String?>(null)
+    val googleIsSyncing = MutableStateFlow(false)
 
     init {
         val database = DriverDatabase.getDatabase(application)
         repository = DriverRepository(database.dao)
+        
+        // Load persistent settings
+        appThemeMode.value = prefs.getInt("app_theme_mode", 0)
+        weeklyClosureDay.value = prefs.getInt("weekly_closure_day", Calendar.MONDAY)
+        monthlyRevenueGoal.value = prefs.getFloat("monthly_revenue_goal", 0f).toDouble()
+        driveFolderName.value = prefs.getString("drive_folder_name", "Fluxo Driver") ?: "Fluxo Driver"
+        reportFormat.value = prefs.getString("report_format", "CSV") ?: "CSV"
+        vehicleType.value = prefs.getInt("vehicle_type", 0)
+        vehicleConsumption.value = prefs.getFloat("vehicle_consumption", 10f).toDouble()
+        fuelPriceEstimate.value = prefs.getFloat("fuel_price_estimate", 5.50f).toDouble()
+        vehicleOwnership.value = prefs.getInt("vehicle_ownership", 0)
+        vehicleRentCost.value = prefs.getFloat("vehicle_rent_cost", 0f).toDouble()
+        vehicleOwnCost.value = prefs.getFloat("vehicle_own_cost", 0f).toDouble()
+
+        googleUserEmail.value = prefs.getString("google_user_email", null)
+        googleUserName.value = prefs.getString("google_user_name", null)
+        googleUserPhotoUrl.value = prefs.getString("google_user_photo_url", null)
     }
+
+    fun onGoogleSignInSuccess(email: String, displayName: String?, photoUrl: String?) {
+        googleUserEmail.value = email
+        googleUserName.value = displayName
+        googleUserPhotoUrl.value = photoUrl
+        prefs.edit().apply {
+            putString("google_user_email", email)
+            putString("google_user_name", displayName)
+            putString("google_user_photo_url", photoUrl)
+        }.apply()
+    }
+
+    fun onGoogleSignOut() {
+        googleUserEmail.value = null
+        googleUserName.value = null
+        googleUserPhotoUrl.value = null
+        prefs.edit().apply {
+            remove("google_user_email")
+            remove("google_user_name")
+            remove("google_user_photo_url")
+        }.apply()
+    }
+
+    private val repositoryAllRecordsFlow = repository.allRecords
+
+    // Settings actions
+    fun setAppThemeMode(mode: Int) {
+        appThemeMode.value = mode
+        prefs.edit().putInt("app_theme_mode", mode).apply()
+    }
+
+    fun setWeeklyClosureDay(day: Int) {
+        weeklyClosureDay.value = day
+        prefs.edit().putInt("weekly_closure_day", day).apply()
+        // Refresh range by re-setting current value
+        referenceDateMillis.value = referenceDateMillis.value
+    }
+
+    fun setMonthlyRevenueGoal(goal: Double) {
+        monthlyRevenueGoal.value = goal
+        prefs.edit().putFloat("monthly_revenue_goal", goal.toFloat()).apply()
+    }
+
+    fun setDriveFolderName(name: String) {
+        driveFolderName.value = name
+        prefs.edit().putString("drive_folder_name", name).apply()
+    }
+
+    fun setReportFormat(format: String) {
+        reportFormat.value = format
+        prefs.edit().putString("report_format", format).apply()
+    }
+
+    fun setVehicleType(type: Int) {
+        vehicleType.value = type
+        prefs.edit().putInt("vehicle_type", type).apply()
+        // If changing to electric, default consumption/price to standard electric if they are defaults
+        if (type == 2 && vehicleConsumption.value == 10.0) {
+            setVehicleConsumption(6.0) // 6 km/kWh is a common EV average
+        } else if (type != 2 && vehicleConsumption.value == 6.0) {
+            setVehicleConsumption(10.0) // Reset to standard Km/L
+        }
+        if (type == 2 && fuelPriceEstimate.value == 5.50) {
+            setFuelPriceEstimate(0.90) // ~0.90 R$ per kWh in BR
+        } else if (type != 2 && fuelPriceEstimate.value == 0.90) {
+            setFuelPriceEstimate(5.50)
+        }
+    }
+
+    fun setVehicleConsumption(cons: Double) {
+        vehicleConsumption.value = cons
+        prefs.edit().putFloat("vehicle_consumption", cons.toFloat()).apply()
+    }
+
+    fun setFuelPriceEstimate(price: Double) {
+        fuelPriceEstimate.value = price
+        prefs.edit().putFloat("fuel_price_estimate", price.toFloat()).apply()
+    }
+
+    fun setVehicleOwnership(ownership: Int) {
+        vehicleOwnership.value = ownership
+        prefs.edit().putInt("vehicle_ownership", ownership).apply()
+    }
+
+    fun setVehicleRentCost(cost: Double) {
+        vehicleRentCost.value = cost
+        prefs.edit().putFloat("vehicle_rent_cost", cost.toFloat()).apply()
+    }
+
+    fun setVehicleOwnCost(cost: Double) {
+        vehicleOwnCost.value = cost
+        prefs.edit().putFloat("vehicle_own_cost", cost.toFloat()).apply()
+    }
+
+    // Monthly absolute revenue tracker for current calendar month
+    val monthlyRevenueProgress: StateFlow<Double> = repositoryAllRecordsFlow.map { records ->
+        val cal = Calendar.getInstance()
+        val currentYear = cal.get(Calendar.YEAR)
+        val currentMonth = cal.get(Calendar.MONTH)
+        
+        records.filter { record ->
+            cal.timeInMillis = record.dateMillis
+            cal.get(Calendar.YEAR) == currentYear && cal.get(Calendar.MONTH) == currentMonth
+        }.sumOf { it.revenue }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 0.0
+    )
 
     // UI States
     val currentPeriod = MutableStateFlow(PeriodView.DAILY)
@@ -57,15 +206,14 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
             initialValue = emptyList()
         )
 
-    private val repositoryAllRecordsFlow = repository.allRecords
-
     // Current records filtered by selected period
-    // Uses combine to emit fresh data whenever currentPeriod, referenceDateMillis or repository data updates
+    // Uses combine to emit fresh data whenever currentPeriod, referenceDateMillis, weeklyClosureDay or repository data updates
     val filteredRecords: StateFlow<List<DriverRecord>> = combine(
         repositoryAllRecordsFlow,
         currentPeriod,
-        referenceDateMillis
-    ) { records, period, refMillis ->
+        referenceDateMillis,
+        weeklyClosureDay
+    ) { records, period, refMillis, _ ->
         val (start, end) = getPeriodRange(period, refMillis)
         records.filter { it.dateMillis in start..end }
     }.stateIn(
@@ -78,8 +226,9 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
     val periodSummary: StateFlow<PeriodSummary> = combine(
         filteredRecords,
         currentPeriod,
-        referenceDateMillis
-    ) { records, period, refMillis ->
+        referenceDateMillis,
+        weeklyClosureDay
+    ) { records, period, refMillis, _ ->
         val periodLabel = getPeriodLabel(period, refMillis)
         if (records.isEmpty()) {
             PeriodSummary(selectedPeriodType = period, periodLabel = periodLabel)
@@ -90,7 +239,8 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
             val totalMeal = records.sumOf { it.expenseMeal }
             val totalRent = records.sumOf { it.expenseRent }
             val totalMisc = records.sumOf { it.expenseMisc }
-            val totalExp = totalMeal + totalRent + totalMisc
+            val totalFuel = records.sumOf { it.expenseFuel }
+            val totalExp = totalMeal + totalRent + totalMisc + totalFuel
             val net = totalRev - totalExp
 
             PeriodSummary(
@@ -102,10 +252,13 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
                 totalMeal = totalMeal,
                 totalRent = totalRent,
                 totalMisc = totalMisc,
+                totalFuel = totalFuel,
                 totalExpenses = totalExp,
                 netProfit = net,
+                grossHourlyRate = if (totalHrs > 0) totalRev / totalHrs else 0.0,
                 netHourlyRate = if (totalHrs > 0) net / totalHrs else 0.0,
                 netMinutelyRate = if (totalHrs > 0) net / (totalHrs * 60.0) else 0.0,
+                grossRevenuePerKm = if (totalKm > 0) totalRev / totalKm else 0.0,
                 costPerKm = if (totalKm > 0) totalExp / totalKm else 0.0,
                 profitPerKm = if (totalKm > 0) net / totalKm else 0.0
             )
@@ -209,6 +362,7 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
         expenseMeal: Double,
         expenseRent: Double,
         expenseMisc: Double,
+        expenseFuel: Double,
         description: String
     ) {
         viewModelScope.launch {
@@ -221,6 +375,7 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
                 expenseMeal = expenseMeal,
                 expenseRent = expenseRent,
                 expenseMisc = expenseMisc,
+                expenseFuel = expenseFuel,
                 description = description
             )
             if (id == 0L) {
@@ -278,10 +433,15 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
                 Pair(start, end)
             }
             PeriodView.WEEKLY -> {
-                // Set first day of week. In Brazil, standard calendar has Sunday or Monday.
-                // Let's compute based on firstDayOfWeek so it is localized, or explicitly Monday.
-                // Let's align to Monday as start of week.
-                cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
+                // Adjust week start to the user-selected weekly closure/starting day
+                val startDay = weeklyClosureDay.value
+                val currentDay = cal.get(Calendar.DAY_OF_WEEK)
+                var diff = currentDay - startDay
+                if (diff < 0) {
+                    diff += 7
+                }
+                cal.add(Calendar.DAY_OF_YEAR, -diff)
+
                 cal.set(Calendar.HOUR_OF_DAY, 0)
                 cal.set(Calendar.MINUTE, 0)
                 cal.set(Calendar.SECOND, 0)
@@ -325,7 +485,14 @@ class DriverViewModel(application: Application) : AndroidViewModel(application) 
             PeriodView.WEEKLY -> {
                 val cal = Calendar.getInstance(Locale.getDefault())
                 cal.timeInMillis = refMillis
-                cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
+                val startDay = weeklyClosureDay.value
+                val currentDay = cal.get(Calendar.DAY_OF_WEEK)
+                var diff = currentDay - startDay
+                if (diff < 0) {
+                    diff += 7
+                }
+                cal.add(Calendar.DAY_OF_YEAR, -diff)
+
                 val startSdf = SimpleDateFormat("d 'de' MMM", Locale("pt", "BR"))
                 val startStr = startSdf.format(cal.time)
 
